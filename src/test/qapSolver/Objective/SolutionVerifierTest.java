@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Set;
 
 import qapSolver.Model.CustomSolution;
+import qapSolver.Model.Permutations;
 import qapSolver.Model.QAPInstance;
 import qapSolver.Model.SampleQAPSolution;
 import qapSolver.Reader.QAPDataset;
@@ -15,12 +16,13 @@ import qapSolver.Reader.QAPDataset;
  * Plain main-class test harness proving ObjectiveFunction + SolutionVerifier
  * correct against every sample solution in the deposit:
  *
- * - 119 solutions (incl. degenerate esc16f) must verify as-is;
- * - the 8 inverse-convention .sln files must fail verify() but reproduce
- *   their value when the inverted permutation is evaluated;
+ * - 127 solutions (incl. degenerate esc16f and the 8 inverse-convention
+ *   files, which the reader auto-normalizes to the standard orientation)
+ *   must verify as-is and carry isValid() = true;
  * - kra32 must fail verify() (header typo 88900) and evaluate to the true
  *   optimum 88700 (as-is or inverted);
- * - a negative control (tampered claimed value) must fail verify().
+ * - isValid() must agree with verify() everywhere;
+ * - negative controls (tampered claimed values) must fail.
  *
  * Usage: SolutionVerifierTest [datDir] [slnDir]
  * (defaults: QAPData/qapdata, QAPData/qapsoln).
@@ -43,7 +45,7 @@ public final class SolutionVerifierTest {
         List<String> failures = new ArrayList<>();
 
         int verified = 0;
-        int inverseConfirmed = 0;
+        int inverseNormalized = 0;
         boolean kra32Confirmed = false;
 
         for (QAPDataset.Pair pair : dataset.pairs()) {
@@ -63,39 +65,33 @@ public final class SolutionVerifierTest {
                     failures.add("kra32: verify() true against the typo header value 88900");
                 }
                 long asIs = ObjectiveFunction.evaluate(inst, sol);
-                long inverted = ObjectiveFunction.evaluate(inst, invert(sol.getPermutation()));
+                long inverted = ObjectiveFunction.evaluate(inst,
+                        Permutations.inverseOf(sol.getPermutation()));
                 if (asIs == KRA32_TRUE_VALUE || inverted == KRA32_TRUE_VALUE) {
                     kra32Confirmed = true;
                 } else {
                     failures.add("kra32: expected " + KRA32_TRUE_VALUE + ", got as-is=" + asIs
                             + " inverted=" + inverted);
                 }
-            } else if (INVERSE_CONVENTION.contains(name)) {
-                if (SolutionVerifier.verify(inst, sol)) {
-                    failures.add(name + ": verify() true although file is inverse-convention");
-                }
-                long inverted = ObjectiveFunction.evaluate(inst, invert(sol.getPermutation()));
-                if (inverted == sol.getValue()) {
-                    inverseConfirmed++;
-                } else {
-                    failures.add(name + ": inverted permutation gives " + inverted
-                            + ", claimed " + sol.getValue());
+            } else if (sol.isValid()) {
+                verified++;
+                if (INVERSE_CONVENTION.contains(name)) {
+                    inverseNormalized++;
                 }
             } else {
-                if (SolutionVerifier.verify(inst, sol)) {
-                    verified++;
-                } else {
-                    failures.add(name + ": verify() false, claimed " + sol.getValue()
-                            + ", computed " + ObjectiveFunction.evaluate(inst, sol));
-                }
+                failures.add(name + ": isValid() false, claimed " + sol.getValue()
+                        + ", computed " + ObjectiveFunction.evaluate(inst, sol)
+                        + " (inverted: " + ObjectiveFunction.evaluate(inst,
+                                Permutations.inverseOf(sol.getPermutation())) + ")");
             }
         }
 
-        if (verified != 119) {
-            failures.add("expected 119 directly verified solutions, got " + verified);
+        if (verified != 127) {
+            failures.add("expected 127 valid solutions, got " + verified);
         }
-        if (inverseConfirmed != 8) {
-            failures.add("expected 8 inverse-convention confirmations, got " + inverseConfirmed);
+        if (inverseNormalized != 8) {
+            failures.add("expected the 8 inverse-convention files normalized and valid, got "
+                    + inverseNormalized);
         }
         if (!kra32Confirmed) {
             failures.add("kra32 true value " + KRA32_TRUE_VALUE + " not confirmed");
@@ -129,19 +125,11 @@ public final class SolutionVerifierTest {
             System.out.println("FAIL: " + f);
         }
         System.out.println();
-        System.out.println("verified as-is        : " + verified + "/119");
-        System.out.println("inverse-convention OK : " + inverseConfirmed + "/8 (via inverted permutation)");
-        System.out.println("kra32 -> " + KRA32_TRUE_VALUE + "        : " + (kra32Confirmed ? "confirmed" : "NOT confirmed"));
+        System.out.println("verified & valid       : " + verified + "/127");
+        System.out.println("of which normalized    : " + inverseNormalized + "/8 (inverse-convention files)");
+        System.out.println("kra32 -> " + KRA32_TRUE_VALUE + "         : " + (kra32Confirmed ? "confirmed" : "NOT confirmed"));
         System.out.println("RESULT: " + (failures.isEmpty() ? "PASS" : failures.size() + " FAILURE(S)"));
         System.exit(failures.isEmpty() ? 0 : 1);
     }
 
-    /** q = p⁻¹, i.e. q[p[i]] = i. */
-    private static int[] invert(int[] p) {
-        int[] inv = new int[p.length];
-        for (int i = 0; i < p.length; i++) {
-            inv[p[i]] = i;
-        }
-        return inv;
-    }
 }

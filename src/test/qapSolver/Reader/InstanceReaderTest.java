@@ -20,9 +20,10 @@ import qapSolver.Model.SampleQAPSolution;
 /**
  * Plain main-class test harness: reads every .dat and .sln in the QAPLIB
  * mirror and proves the readers correct by reproducing each .sln objective
- * value from its permutation, honoring the documented dataset quirks
- * (kra32 header typo → 88700, eight inverse-convention files, 0-based tai40a,
- * comma-separated permutations, degenerate esc16f).
+ * value from its permutation under the standard convention — the reader
+ * auto-normalizes indexing (0-based tai40a) and orientation (the eight
+ * inverse-convention files), so 127 values must match directly; kra32 must
+ * evaluate to the true optimum 88700 (its header 88900 is a known typo).
  *
  * Usage: InstanceReaderTest [datDir] [slnDir]
  * (defaults: QAPData/qapdata, QAPData/qapsoln relative to the working dir).
@@ -32,10 +33,6 @@ public final class InstanceReaderTest {
 
     private static final int EXPECTED_DAT = 136;
     private static final int EXPECTED_SLN = 128;
-
-    /** Files whose value reproduces under Σ A[p(i)][p(j)]·B[i][j] (inverse convention). */
-    private static final Set<String> INVERSE_CONVENTION = Set.of(
-            "esc128", "kra30a", "kra30b", "ste36c", "tai60a", "tai80a", "tho30", "tho150");
 
     /** Instances with no .sln file in the deposit. */
     private static final Set<String> EXPECTED_MISSING_SLN = Set.of(
@@ -56,7 +53,6 @@ public final class InstanceReaderTest {
         Map<String, QAPInstance> instances = readAllInstances(datDir, failures);
 
         int direct = 0;
-        int inverse = 0;
         boolean kra32Confirmed = false;
         List<Path> slnFiles = listFiles(slnDir, ".sln");
         if (slnFiles.size() != EXPECTED_SLN) {
@@ -93,12 +89,8 @@ public final class InstanceReaderTest {
             } else if (costDirect == sol.getValue()) {
                 direct++;
             } else if (costInverse == sol.getValue()) {
-                if (INVERSE_CONVENTION.contains(sol.getInstanceName())) {
-                    inverse++;
-                } else {
-                    failures.add(sol.getInstanceName() + ": matches only under inverse convention but is not a known "
-                            + "inverse-convention file (likely reader bug)");
-                }
+                failures.add(sol.getInstanceName() + ": matches only under inverse convention — reader "
+                        + "failed to auto-normalize orientation");
             } else {
                 failures.add(sol.getInstanceName() + ": value " + sol.getValue() + " not reproduced (direct="
                         + costDirect + ", inverse=" + costInverse + ")");
@@ -112,10 +104,9 @@ public final class InstanceReaderTest {
         }
         System.out.println();
         System.out.println(".dat files read OK : " + instances.size() + "/" + EXPECTED_DAT);
-        System.out.println(".sln values reproduced: " + (direct + inverse + (kra32Confirmed ? 1 : 0))
-                + "/" + EXPECTED_SLN + " (" + direct + " direct, " + inverse
-                + " inverse-convention, kra32->" + KRA32_TRUE_VALUE + " "
-                + (kra32Confirmed ? "confirmed" : "NOT confirmed") + ")");
+        System.out.println(".sln values reproduced: " + (direct + (kra32Confirmed ? 1 : 0))
+                + "/" + EXPECTED_SLN + " (" + direct + " standard-convention after normalization, kra32->"
+                + KRA32_TRUE_VALUE + " " + (kra32Confirmed ? "confirmed" : "NOT confirmed") + ")");
         System.out.println("RESULT: " + (failures.isEmpty() ? "PASS" : failures.size() + " FAILURE(S)"));
         System.exit(failures.isEmpty() ? 0 : 1);
     }

@@ -5,16 +5,27 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import qapSolver.Model.Permutations;
 import qapSolver.Model.QAPInstance;
 import qapSolver.Model.SampleQAPSolution;
+import qapSolver.Objective.ObjectiveFunction;
 
 /**
  * Reads a QAPLIB .sln file: the size n and the objective value on the first
  * line, followed by the n-entry permutation, as whitespace- and/or
- * comma-separated integers (some files use commas). Permutations are
- * normalized to 0-based indexing: a file whose entries span 1..n is shifted
- * down by one, a file spanning 0..n−1 (tai40a) is kept as-is; anything else
- * is rejected. Strict token count: exactly 2 + n tokens.
+ * comma-separated integers (some files use commas). Strict token count:
+ * exactly 2 + n tokens. Two normalizations are applied so every solution in
+ * memory obeys the same conventions:
+ *
+ * 1. Indexing: entries spanning 1..n are shifted to 0-based; a file already
+ *    spanning 0..n−1 (tai40a) is kept; anything else is rejected.
+ * 2. Orientation: if the claimed value does not reproduce under the standard
+ *    convention Σ A[i][j]·B[p(i)][p(j)] but does on the inverted permutation,
+ *    the inversion is stored (the eight known inverse-convention QAPLIB files:
+ *    esc128, kra30a/b, ste36c, tai60a, tai80a, tho30, tho150). A file matching
+ *    neither orientation (kra32's typo header) is stored as read, so it
+ *    surfaces as isValid()=false. A future .sln writer must invert back for
+ *    those eight files to match their on-disk convention.
  *
  * Constructing a solution verifies it against its instance (see
  * {@link qapSolver.Model.QAPSolution}), so the matching QAPInstance is
@@ -78,6 +89,13 @@ public final class SolutionReader {
         } else if (!(min == 0 && max == n - 1)) {
             throw new IOException(file + ": permutation entries span [" + min + ", " + max
                     + "], neither 1-based nor 0-based for n=" + n);
+        }
+
+        if (ObjectiveFunction.evaluate(instance, perm) != value) {
+            int[] inverted = Permutations.inverseOf(perm);
+            if (ObjectiveFunction.evaluate(instance, inverted) == value) {
+                perm = inverted;
+            }
         }
 
         try {
