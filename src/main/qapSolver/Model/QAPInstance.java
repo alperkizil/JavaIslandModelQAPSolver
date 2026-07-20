@@ -1,4 +1,4 @@
-package qapSolver.Reader;
+package qapSolver.Model;
 
 /**
  * Immutable QAP instance: a name, the size n, and the two n-by-n integer
@@ -6,7 +6,7 @@ package qapSolver.Reader;
  * one is "flow" vs "distance" varies by family). Matrices may be asymmetric
  * and may carry nonzero diagonals — consumers must never assume otherwise.
  */
-public final class QapInstance {
+public final class QAPInstance {
 
     private final String name;
     private final int size;
@@ -18,7 +18,7 @@ public final class QapInstance {
      *
      * @throws IllegalArgumentException if the matrices are not both n-by-n
      */
-    public QapInstance(String name, int[][] matrixA, int[][] matrixB) {
+    public QAPInstance(String name, int[][] matrixA, int[][] matrixB) {
         if (name == null || matrixA == null || matrixB == null) {
             throw new IllegalArgumentException("name and matrices must be non-null");
         }

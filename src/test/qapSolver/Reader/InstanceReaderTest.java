@@ -14,6 +14,9 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import qapSolver.Model.QAPInstance;
+import qapSolver.Model.SampleQAPSolution;
+
 /**
  * Plain main-class test harness: reads every .dat and .sln in the QAPLIB
  * mirror and proves the readers correct by reproducing each .sln objective
@@ -50,7 +53,7 @@ public final class InstanceReaderTest {
 
         List<String> failures = new ArrayList<>();
 
-        Map<String, QapInstance> instances = readAllInstances(datDir, failures);
+        Map<String, QAPInstance> instances = readAllInstances(datDir, failures);
 
         int direct = 0;
         int inverse = 0;
@@ -61,14 +64,14 @@ public final class InstanceReaderTest {
         }
 
         for (Path file : slnFiles) {
-            QapSolution sol;
+            SampleQAPSolution sol;
             try {
                 sol = SolutionReader.read(file);
             } catch (IOException e) {
                 failures.add(e.getMessage());
                 continue;
             }
-            QapInstance inst = instances.get(sol.getName());
+            QAPInstance inst = instances.get(sol.getName());
             if (inst == null) {
                 failures.add(sol.getName() + ": .sln has no matching .dat");
                 continue;
@@ -118,16 +121,16 @@ public final class InstanceReaderTest {
         System.exit(failures.isEmpty() ? 0 : 1);
     }
 
-    private static Map<String, QapInstance> readAllInstances(Path datDir, List<String> failures)
+    private static Map<String, QAPInstance> readAllInstances(Path datDir, List<String> failures)
             throws IOException {
-        Map<String, QapInstance> instances = new TreeMap<>();
+        Map<String, QAPInstance> instances = new TreeMap<>();
         List<Path> datFiles = listFiles(datDir, ".dat");
         if (datFiles.size() != EXPECTED_DAT) {
             failures.add("expected " + EXPECTED_DAT + " .dat files, found " + datFiles.size());
         }
         for (Path file : datFiles) {
             try {
-                QapInstance inst = InstanceReader.read(file);
+                QAPInstance inst = InstanceReader.read(file);
                 instances.put(inst.getName(), inst);
             } catch (IOException e) {
                 failures.add(e.getMessage());
@@ -136,7 +139,7 @@ public final class InstanceReaderTest {
         return instances;
     }
 
-    private static void checkMissingSln(Map<String, QapInstance> instances, List<Path> slnFiles,
+    private static void checkMissingSln(Map<String, QAPInstance> instances, List<Path> slnFiles,
             List<String> failures) {
         Set<String> slnNames = slnFiles.stream()
                 .map(p -> {

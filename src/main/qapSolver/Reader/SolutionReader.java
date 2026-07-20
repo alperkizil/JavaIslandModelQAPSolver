@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import qapSolver.Model.SampleQAPSolution;
+
 /**
  * Reads a QAPLIB .sln file: the size n and the objective value on the first
  * line, followed by the n-entry permutation, as whitespace- and/or
@@ -23,7 +25,7 @@ public final class SolutionReader {
      *
      * @throws IOException on I/O failure or any format violation
      */
-    public static QapSolution read(Path file) throws IOException {
+    public static SampleQAPSolution read(Path file) throws IOException {
         String name = stripExtension(file.getFileName().toString());
         String content = new String(Files.readAllBytes(file), StandardCharsets.US_ASCII).trim();
         if (content.isEmpty()) {
@@ -62,7 +64,7 @@ public final class SolutionReader {
         }
 
         try {
-            return new QapSolution(name, value, perm);
+            return new SampleQAPSolution(name, value, perm);
         } catch (IllegalArgumentException e) {
             throw new IOException(file + ": " + e.getMessage(), e);
         }

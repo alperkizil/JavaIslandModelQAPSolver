@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import qapSolver.Model.QAPInstance;
+
 /**
  * Plain main-class test harness for {@link InstanceRepository}: single get,
  * family get (counts checked against known dataset facts: 28 tai, 13 sko),
@@ -31,7 +33,7 @@ public final class InstanceRepositoryTest {
         List<String> sorted = names.stream().sorted().collect(Collectors.toList());
         check(failures, names.equals(sorted), "listNames: not sorted");
 
-        QapInstance one = repo.get("tai60a");
+        QAPInstance one = repo.get("tai60a");
         check(failures, one.getSize() == 60, "get(tai60a): expected n=60, got " + one.getSize());
         check(failures, one.getName().equals("tai60a"), "get(tai60a): wrong name " + one.getName());
 
@@ -43,20 +45,20 @@ public final class InstanceRepositoryTest {
         }
         check(failures, threw, "get(doesnotexist): expected IOException");
 
-        List<QapInstance> tai = repo.getFamily("tai");
+        List<QAPInstance> tai = repo.getFamily("tai");
         check(failures, tai.size() == 28, "getFamily(tai): expected 28, got " + tai.size());
         check(failures, tai.stream().allMatch(i -> i.getName().startsWith("tai")),
                 "getFamily(tai): non-tai instance in result");
 
-        List<QapInstance> sko = repo.getFamily("sko");
+        List<QAPInstance> sko = repo.getFamily("sko");
         check(failures, sko.size() == 13, "getFamily(sko): expected 13, got " + sko.size());
 
         check(failures, repo.getFamily("t").isEmpty(), "getFamily(t): exact match violated");
         check(failures, repo.getFamily("unknown").isEmpty(), "getFamily(unknown): expected empty");
 
-        List<QapInstance> all = repo.getAll();
+        List<QAPInstance> all = repo.getAll();
         check(failures, all.size() == 136, "getAll: expected 136, got " + all.size());
-        List<String> allNames = all.stream().map(QapInstance::getName).collect(Collectors.toList());
+        List<String> allNames = all.stream().map(QAPInstance::getName).collect(Collectors.toList());
         check(failures, allNames.equals(names), "getAll: names differ from listNames");
 
         check(failures, InstanceRepository.familyOf("tai100a").equals("tai"), "familyOf(tai100a) != tai");
