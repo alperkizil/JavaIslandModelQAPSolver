@@ -14,6 +14,9 @@ at all times:
    instead of picking a default silently.
 4. **Step-by-step development.** The GA solver is built incrementally in small,
    user-directed steps — do the step that was asked, then stop; don't run ahead.
+5. **No pushing or PR creation without asking.** Commit each step locally.
+   Before any push or PR, always ask the user first — act only on their
+   explicit go-ahead.
 
 ## Project
 
