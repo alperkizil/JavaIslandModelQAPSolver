@@ -32,6 +32,9 @@ Currently in design/brainstorming phase — no solver code yet.
 - Java notes: accumulate costs in `long` (random tai100b solutions approach
   `Integer.MAX_VALUE`); keep hot loops primitive (no boxing/streams); asymmetric
   instances need the general two-orientation swap delta; never skip diagonal terms.
+- **Toolchain: JDK 11+.** Target Java 11 language level and APIs only — no
+  post-11 features (records, switch expressions, text blocks, sealed types,
+  pattern-matching `instanceof`). `var` is allowed.
 
 ## Initial dataset analysis (July 2026)
 
