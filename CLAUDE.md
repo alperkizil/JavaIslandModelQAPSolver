@@ -29,7 +29,9 @@ at all times:
 
 **JavaIslandModelQAPSolver** — an Island-Model GA + Simulated Annealing hybrid
 solver for the Quadratic Assignment Problem, to be written in **Java**.
-Currently in design/brainstorming phase — no solver code yet.
+Foundation layer (Model/Reader/Objective) is implemented — **see
+[HANDOFF.md](HANDOFF.md)** for the current implementation state, architecture,
+build/run commands, and the decisions log. No GA/SA solver code yet.
 
 - Objective: minimize `cost(p) = Σᵢ Σⱼ A[i][j] · B[p(i)][p(j)]` over permutations `p`.
 - Instances: `QAPData/qapdata/*.dat` (136 files: `n`, matrix A, matrix B).
