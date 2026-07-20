@@ -21,7 +21,7 @@ public final class QAPDataset {
 
     public QAPDataset(Path datDirectory, Path slnDirectory) {
         this.instances = new InstanceRepository(datDirectory);
-        this.solutions = new SolutionRepository(slnDirectory);
+        this.solutions = new SolutionRepository(slnDirectory, this.instances);
     }
 
     public InstanceRepository getInstanceRepository() {

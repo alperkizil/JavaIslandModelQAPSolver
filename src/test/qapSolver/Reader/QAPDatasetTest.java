@@ -51,9 +51,9 @@ public final class QAPDatasetTest {
                 failures.add(pair.getInstance().getName() + ": instance n=" + pair.getInstance().getSize()
                         + " but solution n=" + sol.get().getSize());
             }
-            if (!pair.getInstance().getName().equals(sol.get().getName())) {
+            if (!pair.getInstance().getName().equals(sol.get().getInstanceName())) {
                 failures.add(pair.getInstance().getName() + ": paired with solution named "
-                        + sol.get().getName());
+                        + sol.get().getInstanceName());
             }
         }
         check(failures, withSolution == 128, "pairs: expected 128 with solution, got " + withSolution);

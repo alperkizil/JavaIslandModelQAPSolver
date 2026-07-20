@@ -13,18 +13,21 @@ import qapSolver.Model.SampleQAPSolution;
  * Name-based access to a directory of QAPLIB .sln reference solutions,
  * mirroring {@link InstanceRepository}. Matching a solution to its instance
  * is by shared name; not every instance has one (eight do not), hence
- * {@link #find(String)}. File parsing stays in {@link SolutionReader};
- * no caching; all listings sorted by name.
+ * {@link #find(String)}. Constructing a solution verifies it against its
+ * instance, so this repository needs the instance side too. File parsing
+ * stays in {@link SolutionReader}; no caching; all listings sorted by name.
  */
 public final class SolutionRepository {
 
     private final Path directory;
+    private final InstanceRepository instances;
 
-    public SolutionRepository(Path directory) {
-        if (directory == null) {
-            throw new IllegalArgumentException("directory must be non-null");
+    public SolutionRepository(Path directory, InstanceRepository instances) {
+        if (directory == null || instances == null) {
+            throw new IllegalArgumentException("directory and instances must be non-null");
         }
         this.directory = directory;
+        this.instances = instances;
     }
 
     /**
@@ -38,7 +41,7 @@ public final class SolutionRepository {
         if (!Files.isRegularFile(file)) {
             throw new IOException("no such solution '" + name + "' in " + directory);
         }
-        return SolutionReader.read(file);
+        return SolutionReader.read(file, instances.get(name));
     }
 
     /**

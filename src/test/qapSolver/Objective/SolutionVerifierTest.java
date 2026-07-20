@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import qapSolver.Model.CustomSolution;
 import qapSolver.Model.QAPInstance;
 import qapSolver.Model.SampleQAPSolution;
 import qapSolver.Reader.QAPDataset;
@@ -51,7 +52,11 @@ public final class SolutionVerifierTest {
             }
             QAPInstance inst = pair.getInstance();
             SampleQAPSolution sol = pair.getSolution().get();
-            String name = sol.getName();
+            String name = sol.getInstanceName();
+
+            if (SolutionVerifier.verify(inst, sol) != sol.isValid()) {
+                failures.add(name + ": isValid() inconsistent with verify()");
+            }
 
             if (name.equals("kra32")) {
                 if (SolutionVerifier.verify(inst, sol)) {
@@ -99,9 +104,25 @@ public final class SolutionVerifierTest {
         QAPInstance tai12a = dataset.getInstance("tai12a");
         SampleQAPSolution good = dataset.findSolution("tai12a").get();
         SampleQAPSolution tampered = new SampleQAPSolution(
-                good.getName(), good.getValue() + 1, good.getPermutation());
-        if (SolutionVerifier.verify(tai12a, tampered)) {
-            failures.add("negative control: tampered tai12a value passed verify()");
+                tai12a, good.getValue() + 1, good.getPermutation());
+        if (SolutionVerifier.verify(tai12a, tampered) || tampered.isValid()) {
+            failures.add("negative control: tampered tai12a value passed verify()/isValid()");
+        }
+
+        int[] identity = new int[tai12a.getSize()];
+        for (int i = 0; i < identity.length; i++) {
+            identity[i] = i;
+        }
+        CustomSolution custom = new CustomSolution(
+                tai12a, ObjectiveFunction.evaluate(tai12a, identity), identity);
+        if (!custom.isValid() || !custom.getInstanceName().equals("tai12a")
+                || custom.getSize() != 12) {
+            failures.add("CustomSolution: expected valid identity solution for tai12a, got " + custom);
+        }
+        CustomSolution wrongClaim = new CustomSolution(
+                tai12a, custom.getValue() + 1, identity.clone());
+        if (wrongClaim.isValid()) {
+            failures.add("CustomSolution: wrong claimed value must yield isValid()=false");
         }
 
         for (String f : failures) {

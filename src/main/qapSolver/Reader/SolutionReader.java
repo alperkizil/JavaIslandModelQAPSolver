@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import qapSolver.Model.QAPInstance;
 import qapSolver.Model.SampleQAPSolution;
 
 /**
@@ -14,6 +15,10 @@ import qapSolver.Model.SampleQAPSolution;
  * normalized to 0-based indexing: a file whose entries span 1..n is shifted
  * down by one, a file spanning 0..n−1 (tai40a) is kept as-is; anything else
  * is rejected. Strict token count: exactly 2 + n tokens.
+ *
+ * Constructing a solution verifies it against its instance (see
+ * {@link qapSolver.Model.QAPSolution}), so the matching QAPInstance is
+ * required; the file name must match the instance name.
  */
 public final class SolutionReader {
 
@@ -21,12 +26,20 @@ public final class SolutionReader {
     }
 
     /**
-     * Reads one solution; the name is the file name without its .sln extension.
+     * Reads one solution for the given instance; the solution name is the
+     * file name without its .sln extension and must equal the instance name.
      *
      * @throws IOException on I/O failure or any format violation
      */
-    public static SampleQAPSolution read(Path file) throws IOException {
+    public static SampleQAPSolution read(Path file, QAPInstance instance) throws IOException {
+        if (instance == null) {
+            throw new IOException(file + ": instance must be non-null");
+        }
         String name = stripExtension(file.getFileName().toString());
+        if (!name.equals(instance.getName())) {
+            throw new IOException(file + ": file name '" + name + "' does not match instance '"
+                    + instance.getName() + "'");
+        }
         String content = new String(Files.readAllBytes(file), StandardCharsets.US_ASCII).trim();
         if (content.isEmpty()) {
             throw new IOException(file + ": file is empty");
@@ -39,6 +52,10 @@ public final class SolutionReader {
         int n = parseInt(tokens, 0, file);
         if (n <= 0) {
             throw new IOException(file + ": invalid size n=" + n);
+        }
+        if (n != instance.getSize()) {
+            throw new IOException(file + ": declares n=" + n + " but instance has n="
+                    + instance.getSize());
         }
         long value = parseLong(tokens, 1, file);
         if (tokens.length != 2 + n) {
@@ -64,7 +81,7 @@ public final class SolutionReader {
         }
 
         try {
-            return new SampleQAPSolution(name, value, perm);
+            return new SampleQAPSolution(instance, value, perm);
         } catch (IllegalArgumentException e) {
             throw new IOException(file + ": " + e.getMessage(), e);
         }

@@ -64,27 +64,26 @@ public final class InstanceReaderTest {
         }
 
         for (Path file : slnFiles) {
+            String name = file.getFileName().toString();
+            name = name.substring(0, name.length() - ".sln".length());
+            QAPInstance inst = instances.get(name);
+            if (inst == null) {
+                failures.add(name + ": .sln has no matching .dat");
+                continue;
+            }
             SampleQAPSolution sol;
             try {
-                sol = SolutionReader.read(file);
+                // size agreement .dat vs .sln is enforced inside the reader
+                sol = SolutionReader.read(file, inst);
             } catch (IOException e) {
                 failures.add(e.getMessage());
-                continue;
-            }
-            QAPInstance inst = instances.get(sol.getName());
-            if (inst == null) {
-                failures.add(sol.getName() + ": .sln has no matching .dat");
-                continue;
-            }
-            if (inst.getSize() != sol.getSize()) {
-                failures.add(sol.getName() + ": .dat n=" + inst.getSize() + " but .sln n=" + sol.getSize());
                 continue;
             }
 
             long costDirect = cost(inst.getMatrixA(), inst.getMatrixB(), sol.getPermutation());
             long costInverse = cost(inst.getMatrixB(), inst.getMatrixA(), sol.getPermutation());
 
-            if (sol.getName().equals("kra32")) {
+            if (sol.getInstanceName().equals("kra32")) {
                 if (costDirect == KRA32_TRUE_VALUE || costInverse == KRA32_TRUE_VALUE) {
                     kra32Confirmed = true;
                 } else {
@@ -94,14 +93,14 @@ public final class InstanceReaderTest {
             } else if (costDirect == sol.getValue()) {
                 direct++;
             } else if (costInverse == sol.getValue()) {
-                if (INVERSE_CONVENTION.contains(sol.getName())) {
+                if (INVERSE_CONVENTION.contains(sol.getInstanceName())) {
                     inverse++;
                 } else {
-                    failures.add(sol.getName() + ": matches only under inverse convention but is not a known "
+                    failures.add(sol.getInstanceName() + ": matches only under inverse convention but is not a known "
                             + "inverse-convention file (likely reader bug)");
                 }
             } else {
-                failures.add(sol.getName() + ": value " + sol.getValue() + " not reproduced (direct="
+                failures.add(sol.getInstanceName() + ": value " + sol.getValue() + " not reproduced (direct="
                         + costDirect + ", inverse=" + costInverse + ")");
             }
         }
