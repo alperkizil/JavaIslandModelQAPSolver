@@ -18,6 +18,13 @@ at all times:
    Before any push or PR, always ask the user first — act only on their
    explicit go-ahead.
 
+## Design principles
+
+- Object-oriented design with a modular approach.
+- Maximum code reusability.
+- Separate individual components as much as possible — high cohesion, low
+  coupling: each module does one thing and exposes a minimal interface.
+
 ## Project
 
 **JavaIslandModelQAPSolver** — an Island-Model GA + Simulated Annealing hybrid
