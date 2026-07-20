@@ -16,11 +16,11 @@ import qapSolver.Reader.QAPDataset;
  * Plain main-class test harness proving ObjectiveFunction + SolutionVerifier
  * correct against every sample solution in the deposit:
  *
- * - 127 solutions (incl. degenerate esc16f and the 8 inverse-convention
- *   files, which the reader auto-normalizes to the standard orientation)
- *   must verify as-is and carry isValid() = true;
- * - kra32 must fail verify() (header typo 88900) and evaluate to the true
- *   optimum 88700 (as-is or inverted);
+ * - all 128 solutions must verify as-is and carry isValid() = true — the
+ *   reader normalizes the quirks (8 inverse-convention files inverted,
+ *   kra32's typo header corrected to the true optimum 88700, degenerate
+ *   esc16f trivially valid);
+ * - kra32 specifically must carry the corrected value 88700;
  * - isValid() must agree with verify() everywhere;
  * - negative controls (tampered claimed values) must fail.
  *
@@ -61,17 +61,13 @@ public final class SolutionVerifierTest {
             }
 
             if (name.equals("kra32")) {
-                if (SolutionVerifier.verify(inst, sol)) {
-                    failures.add("kra32: verify() true against the typo header value 88900");
-                }
-                long asIs = ObjectiveFunction.evaluate(inst, sol);
-                long inverted = ObjectiveFunction.evaluate(inst,
-                        Permutations.inverseOf(sol.getPermutation()));
-                if (asIs == KRA32_TRUE_VALUE || inverted == KRA32_TRUE_VALUE) {
+                if (sol.isValid() && sol.getValue() == KRA32_TRUE_VALUE
+                        && ObjectiveFunction.evaluate(inst, sol) == KRA32_TRUE_VALUE) {
                     kra32Confirmed = true;
+                    verified++;
                 } else {
-                    failures.add("kra32: expected " + KRA32_TRUE_VALUE + ", got as-is=" + asIs
-                            + " inverted=" + inverted);
+                    failures.add("kra32: expected corrected value " + KRA32_TRUE_VALUE
+                            + " with isValid()=true, got " + sol);
                 }
             } else if (sol.isValid()) {
                 verified++;
@@ -86,15 +82,15 @@ public final class SolutionVerifierTest {
             }
         }
 
-        if (verified != 127) {
-            failures.add("expected 127 valid solutions, got " + verified);
+        if (verified != 128) {
+            failures.add("expected 128 valid solutions, got " + verified);
         }
         if (inverseNormalized != 8) {
             failures.add("expected the 8 inverse-convention files normalized and valid, got "
                     + inverseNormalized);
         }
         if (!kra32Confirmed) {
-            failures.add("kra32 true value " + KRA32_TRUE_VALUE + " not confirmed");
+            failures.add("kra32 header correction to " + KRA32_TRUE_VALUE + " not confirmed");
         }
 
         QAPInstance tai12a = dataset.getInstance("tai12a");
@@ -125,9 +121,9 @@ public final class SolutionVerifierTest {
             System.out.println("FAIL: " + f);
         }
         System.out.println();
-        System.out.println("verified & valid       : " + verified + "/127");
+        System.out.println("verified & valid       : " + verified + "/128");
         System.out.println("of which normalized    : " + inverseNormalized + "/8 (inverse-convention files)");
-        System.out.println("kra32 -> " + KRA32_TRUE_VALUE + "         : " + (kra32Confirmed ? "confirmed" : "NOT confirmed"));
+        System.out.println("kra32 corrected->" + KRA32_TRUE_VALUE + " : " + (kra32Confirmed ? "confirmed" : "NOT confirmed"));
         System.out.println("RESULT: " + (failures.isEmpty() ? "PASS" : failures.size() + " FAILURE(S)"));
         System.exit(failures.isEmpty() ? 0 : 1);
     }

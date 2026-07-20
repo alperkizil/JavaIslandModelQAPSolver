@@ -21,9 +21,9 @@ import qapSolver.Model.SampleQAPSolution;
  * Plain main-class test harness: reads every .dat and .sln in the QAPLIB
  * mirror and proves the readers correct by reproducing each .sln objective
  * value from its permutation under the standard convention — the reader
- * auto-normalizes indexing (0-based tai40a) and orientation (the eight
- * inverse-convention files), so 127 values must match directly; kra32 must
- * evaluate to the true optimum 88700 (its header 88900 is a known typo).
+ * auto-normalizes indexing (0-based tai40a), orientation (the eight
+ * inverse-convention files) and kra32's typo header (88900 → true optimum
+ * 88700), so all 128 values must match directly.
  *
  * Usage: InstanceReaderTest [datDir] [slnDir]
  * (defaults: QAPData/qapdata, QAPData/qapsoln relative to the working dir).
@@ -80,11 +80,12 @@ public final class InstanceReaderTest {
             long costInverse = cost(inst.getMatrixB(), inst.getMatrixA(), sol.getPermutation());
 
             if (sol.getInstanceName().equals("kra32")) {
-                if (costDirect == KRA32_TRUE_VALUE || costInverse == KRA32_TRUE_VALUE) {
+                if (sol.getValue() == KRA32_TRUE_VALUE && costDirect == KRA32_TRUE_VALUE) {
                     kra32Confirmed = true;
                 } else {
-                    failures.add("kra32: expected " + KRA32_TRUE_VALUE + " (header-typo quirk), got direct="
-                            + costDirect + " inverse=" + costInverse + " header=" + sol.getValue());
+                    failures.add("kra32: expected corrected value " + KRA32_TRUE_VALUE
+                            + " reproduced directly, got value=" + sol.getValue()
+                            + " direct=" + costDirect);
                 }
             } else if (costDirect == sol.getValue()) {
                 direct++;
@@ -105,7 +106,7 @@ public final class InstanceReaderTest {
         System.out.println();
         System.out.println(".dat files read OK : " + instances.size() + "/" + EXPECTED_DAT);
         System.out.println(".sln values reproduced: " + (direct + (kra32Confirmed ? 1 : 0))
-                + "/" + EXPECTED_SLN + " (" + direct + " standard-convention after normalization, kra32->"
+                + "/" + EXPECTED_SLN + " (" + direct + " standard-convention after normalization, kra32 corrected->"
                 + KRA32_TRUE_VALUE + " " + (kra32Confirmed ? "confirmed" : "NOT confirmed") + ")");
         System.out.println("RESULT: " + (failures.isEmpty() ? "PASS" : failures.size() + " FAILURE(S)"));
         System.exit(failures.isEmpty() ? 0 : 1);

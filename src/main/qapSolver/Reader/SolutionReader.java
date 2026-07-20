@@ -19,19 +19,28 @@ import qapSolver.Objective.ObjectiveFunction;
  *
  * 1. Indexing: entries spanning 1..n are shifted to 0-based; a file already
  *    spanning 0..n−1 (tai40a) is kept; anything else is rejected.
- * 2. Orientation: if the claimed value does not reproduce under the standard
+ * 2. kra32 header correction: kra32.sln's value 88900 is a known QAPLIB typo
+ *    (88900 belongs to kra30a); the correction to the true optimum 88700 is
+ *    applied only when that exact documented situation is present (file is
+ *    kra32, header 88900, permutation evaluating to 88700 in either
+ *    orientation) — never as a blanket "trust the permutation" rule.
+ * 3. Orientation: if the claimed value does not reproduce under the standard
  *    convention Σ A[i][j]·B[p(i)][p(j)] but does on the inverted permutation,
  *    the inversion is stored (the eight known inverse-convention QAPLIB files:
  *    esc128, kra30a/b, ste36c, tai60a, tai80a, tho30, tho150). A file matching
- *    neither orientation (kra32's typo header) is stored as read, so it
- *    surfaces as isValid()=false. A future .sln writer must invert back for
- *    those eight files to match their on-disk convention.
+ *    neither orientation is stored as read and surfaces as isValid()=false.
+ *    A future .sln writer must invert back for those eight files (and restore
+ *    kra32's on-disk header) to match their file conventions.
  *
  * Constructing a solution verifies it against its instance (see
  * {@link qapSolver.Model.QAPSolution}), so the matching QAPInstance is
  * required; the file name must match the instance name.
  */
 public final class SolutionReader {
+
+    private static final String KRA32_NAME = "kra32";
+    private static final long KRA32_TYPO_VALUE = 88900L;
+    private static final long KRA32_TRUE_VALUE = 88700L;
 
     private SolutionReader() {
     }
@@ -89,6 +98,13 @@ public final class SolutionReader {
         } else if (!(min == 0 && max == n - 1)) {
             throw new IOException(file + ": permutation entries span [" + min + ", " + max
                     + "], neither 1-based nor 0-based for n=" + n);
+        }
+
+        if (name.equals(KRA32_NAME) && value == KRA32_TYPO_VALUE
+                && (ObjectiveFunction.evaluate(instance, perm) == KRA32_TRUE_VALUE
+                        || ObjectiveFunction.evaluate(instance,
+                                Permutations.inverseOf(perm)) == KRA32_TRUE_VALUE)) {
+            value = KRA32_TRUE_VALUE;
         }
 
         if (ObjectiveFunction.evaluate(instance, perm) != value) {
