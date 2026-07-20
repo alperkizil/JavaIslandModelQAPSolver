@@ -18,6 +18,39 @@ Currently in design/brainstorming phase — no solver code yet.
   `Integer.MAX_VALUE`); keep hot loops primitive (no boxing/streams); asymmetric
   instances need the general two-orientation swap delta; never skip diagonal terms.
 
+## Initial dataset analysis (July 2026)
+
+Established when first analyzing this folder; status verified against the QAPLIB
+maintainer's pages (miguelanjos.com "QAPLIB Challenge"; COR@L QAPLIB news).
+
+- The folder is the Edinburgh DataShare deposit **DS_10283_4390** of QAPLIB.
+  The bundled README PDF is the **April 2012** status snapshot (Hahn & Anjos).
+- 136 instances across 15 families; 128 `.sln` files. Eight instances have no
+  `.sln`: esc32a–d, esc32h, esc64a (optimal permutations are printed in the PDF)
+  and tai10a/b (optima computed exactly in this project by enumeration).
+- **Solved to optimality (108):** entire families bur, chr, els, esc, had, kra,
+  lipa, nug, rou, scr, ste; tho30; and tai10a/b, tai12a/b, tai15a/b, tai17a,
+  tai20a/b, tai25a/b, tai30b, tai64c. Post-2012 closures: tai35b, tai40b
+  (2015, arXiv:1510.02065) and tai30a, sko42 (2021, arXiv:2101.09629,
+  NewtBracket SDP). Milestones: esc family closed by Fischetti–Monaci–Salvagnin
+  MILP (~2011); nug30 by Anstreicher et al. (2000); esc128 (n=128) is the
+  largest instance ever solved exactly.
+- **Open (28)** — best known value only, gap vs. best lower bound per the 2012 README:
+  - sko (12): sko49, sko56, sko64, sko72, sko81, sko90, sko100a–f — gaps ~5.4–5.9%
+  - tai (12): tai35a, tai40a, tai50a, tai60a, tai80a, tai100a (a-series, gaps
+    8.5–24.9%); tai50b, tai60b, tai80b, tai100b, tai150b (b-series, 10.8–13.8%);
+    tai256c (2.0%)
+  - tho40 (6.7%), tho150 (6.3%); wil50 (3.5%), wil100 (3.2%)
+- Smallest open instance is sko49 (everything n ≤ 42 is closed). The hardest are
+  Taillard's uniform-random a-series (tai100a bound ~25% below best known).
+  tai256c has only a 2% gap but is far too large for exact methods.
+- The objective was verified computationally: 127/128 `.sln` values reproduce
+  exactly under `cost(p) = Σ A[i][j]·B[p(i)][p(j)]` (the exception is the kra32
+  header typo; see README.md quirks for the 8 inverse-convention files).
+- Caveat: `.sln` values for open instances are 2012 records; some large tai-a
+  best knowns have since been improved slightly — check current QAPLIB/Taillard
+  pages before citing them as records.
+
 ## qaplib_characteristics.csv — column reference
 
 One row per instance, sorted by (family, n, name). Convention: **A = first matrix
