@@ -9,9 +9,9 @@ characterization driving the solver design.
 
 ## Contents
 
-- `DS_10283_4390/qapdata/` — 136 problem instances (`.dat`: `n`, matrix A, matrix B)
-- `DS_10283_4390/qapsoln/` — 128 solution files (`.sln`: `n`, objective value, permutation)
-- `DS_10283_4390/README-QAPLIB-Problem Instances and Solutions.pdf` — official
+- `QAPData/qapdata/` — 136 problem instances (`.dat`: `n`, matrix A, matrix B)
+- `QAPData/qapsoln/` — 128 solution files (`.sln`: `n`, objective value, permutation)
+- `QAPData/README-QAPLIB-Problem Instances and Solutions.pdf` — official
   status document (April 2012 snapshot)
 - `qaplib_characteristics.csv` — per-instance characterization (symmetry, sparsity,
   Vollmann–Buffa dominance, tie structure, value ranges, random-solution gap to

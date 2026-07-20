@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit --quiet -m 'Rename dataset folder DS_10283_4390 to QAPData *)",
+      "Bash(git push *)"
+    ]
+  }
+}

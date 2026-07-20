@@ -7,8 +7,8 @@ solver for the Quadratic Assignment Problem, to be written in **Java**.
 Currently in design/brainstorming phase — no solver code yet.
 
 - Objective: minimize `cost(p) = Σᵢ Σⱼ A[i][j] · B[p(i)][p(j)]` over permutations `p`.
-- Instances: `DS_10283_4390/qapdata/*.dat` (136 files: `n`, matrix A, matrix B).
-- Reference solutions: `DS_10283_4390/qapsoln/*.sln` (128 files: `n`, value, permutation).
+- Instances: `QAPData/qapdata/*.dat` (136 files: `n`, matrix A, matrix B).
+- Reference solutions: `QAPData/qapsoln/*.sln` (128 files: `n`, value, permutation).
 - 108 instances have proven optima; 28 are open (best known only) — see README.md.
 - **Read the "Data quirks" section of README.md before writing any loader or
   evaluator** (kra32 header typo → true optimum 88700, eight inverse-convention
@@ -23,8 +23,9 @@ Currently in design/brainstorming phase — no solver code yet.
 Established when first analyzing this folder; status verified against the QAPLIB
 maintainer's pages (miguelanjos.com "QAPLIB Challenge"; COR@L QAPLIB news).
 
-- The folder is the Edinburgh DataShare deposit **DS_10283_4390** of QAPLIB.
-  The bundled README PDF is the **April 2012** status snapshot (Hahn & Anjos).
+- The dataset folder `QAPData/` is the Edinburgh DataShare deposit
+  **DS_10283_4390** of QAPLIB. The bundled README PDF is the **April 2012**
+  status snapshot (Hahn & Anjos).
 - 136 instances across 15 families; 128 `.sln` files. Eight instances have no
   `.sln`: esc32a–d, esc32h, esc64a (optimal permutations are printed in the PDF)
   and tai10a/b (optima computed exactly in this project by enumeration).
