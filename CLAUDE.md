@@ -1,0 +1,71 @@
+# CLAUDE.md
+
+## Project
+
+**JavaIslandModelQAPSolver** — an Island-Model GA + Simulated Annealing hybrid
+solver for the Quadratic Assignment Problem, to be written in **Java**.
+Currently in design/brainstorming phase — no solver code yet.
+
+- Objective: minimize `cost(p) = Σᵢ Σⱼ A[i][j] · B[p(i)][p(j)]` over permutations `p`.
+- Instances: `DS_10283_4390/qapdata/*.dat` (136 files: `n`, matrix A, matrix B).
+- Reference solutions: `DS_10283_4390/qapsoln/*.sln` (128 files: `n`, value, permutation).
+- 108 instances have proven optima; 28 are open (best known only) — see README.md.
+- **Read the "Data quirks" section of README.md before writing any loader or
+  evaluator** (kra32 header typo → true optimum 88700, eight inverse-convention
+  `.sln` files, 0-based tai40a, comma-separated permutations, degenerate esc16f,
+  nonzero diagonals in bur/tai64c/tai256c, 37 asymmetric instances).
+- Java notes: accumulate costs in `long` (random tai100b solutions approach
+  `Integer.MAX_VALUE`); keep hot loops primitive (no boxing/streams); asymmetric
+  instances need the general two-orientation swap delta; never skip diagonal terms.
+
+## qaplib_characteristics.csv — column reference
+
+One row per instance, sorted by (family, n, name). Convention: **A = first matrix
+in the `.dat` file, B = second**; which is "flow" vs "distance" varies by family,
+so structural metrics are reported for both. Sampling columns used fixed seed 42
+(200 random solutions; 2000-step random walk) — estimates, not exact values.
+
+### Identity
+
+| Column | Meaning |
+|---|---|
+| `name` | Instance ID = `.dat` filename without extension (e.g. `tai60a`). |
+| `family` | Alphabetic prefix before the first digit (`bur`, `chr`, `els`, `esc`, `had`, `kra`, `lipa`, `nug`, `rou`, `scr`, `sko`, `ste`, `tai`, `tho`, `wil`). |
+| `n` | Problem size (facilities = locations). Search space is `n!`. |
+
+### Matrix structure
+
+| Column | Meaning |
+|---|---|
+| `sym_A`, `sym_B` | `True` if the matrix equals its transpose. If either is `False` the instance is asymmetric (all bur, all lipa, tai-b series — in tai-b it is B) → general delta formula required. |
+| `diag_A_nonzero`, `diag_B_nonzero` | `True` if the matrix has any nonzero diagonal entry (bur26a–h, tai64c, tai256c). Adds permutation-dependent term `Σᵢ A[i][i]·B[p(i)][p(i)]` — evaluators must include diagonals. |
+| `sparsity_A_pct`, `sparsity_B_pct` | % of **off-diagonal** entries equal to zero. High sparsity (esc: 77–100%) → plateau-heavy landscape. |
+| `dom_A`, `dom_B` | Vollmann–Buffa dominance = `100·std/mean` over all n² entries. ≈60 = uniform-random noise (tai-a); >150 = clustered/exploitable structure (tai-b ≈ 320). `NaN` only for esc16f's all-zero matrix. |
+| `distinct_A`, `distinct_B` | Count of distinct off-diagonal values. Few values (grids: 6–10; tai-c: 14–41) → many exact fitness ties → dedup must compare permutations, not fitness. |
+| `max_A`, `max_B` | Largest entry per matrix. Largest product in library ≈ 2.9e8 (tai15b): deltas fit `int`, totals need `long`. |
+
+### Reference value
+
+| Column | Meaning |
+|---|---|
+| `bks` | Best known solution value. From `.sln` files with corrections: kra32 → 88700; esc32a–d/h, esc64a from README PDF; tai10a = 135028 and tai10b = 1183760 computed exactly by enumeration. Proven optimal for 108 instances; best-known-only for the 28 open ones. |
+
+### Landscape probes (seed 42)
+
+| Column | Meaning |
+|---|---|
+| `rand_mean`, `rand_min` | Mean / best objective over 200 uniformly random permutations. `rand_min` = trivial baseline any search must beat immediately. |
+| `rand_gap_pct` | `100·(rand_mean − bks)/bks` — total exploitable structure. ~2% on lipa-a (flat, needle-in-haystack), 14–27% on tai-a (the hard/open class), 150–2500% on chr/els/esc (local search does the heavy lifting). Empty for esc16f (bks = 0). |
+| `walk_rho1` | Lag-1 autocorrelation of cost along a 2000-step random walk in the swap neighborhood. Near 1 = smooth; lower = rugged. Empty if walk variance is 0. |
+| `corr_len_over_n` | Autocorrelation length `ℓ = −1/ln(ρ₁)` divided by n: swaps until fitness decorrelates, as a fraction of n. Measured 0.22–0.33 for every family → ruggedness does not separate easy from hard here; a kick of ≈0.25·n swaps escapes a basin (good default for hot-island mutation / SA restart kicks). Empty when ρ₁ ∉ (0,1). |
+
+### How to use it for solver presets
+
+Class signature per instance = (`dom_*`, `sparsity_*`, `rand_gap_pct`):
+- tai-a-like (dom ≈ 60, gap shrinking with n): maximize diversity — larger archive
+  d_min, rare migration, hot-heavy island budget.
+- Plateau-like (high sparsity, few distinct values: esc, tai-c): sideways-move
+  tolerance in SA, permutation-level dedup.
+- Structured (tai-b, real-life families; dom > 150, gap > 50%): colder/deeper SA,
+  earlier convergence acceptable. Do not tune global parameters on these.
+- lipa-a (gap ≤ 7%): pass/fail stress test; exclude from parameter tuning.
