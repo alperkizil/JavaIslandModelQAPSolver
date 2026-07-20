@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 DS_10283_4390.zip
 .claude/settings.local.json
+out/

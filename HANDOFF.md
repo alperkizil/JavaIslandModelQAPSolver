@@ -1,0 +1,128 @@
+# HANDOFF — implementation state
+
+Session handoff for **JavaIslandModelQAPSolver** (July 2026). Working rules and
+dataset background live in [CLAUDE.md](CLAUDE.md); this file records what has
+been built so far, the decisions behind it, and how to run it.
+
+## Status
+
+Foundation layer complete: dataset model, readers/repositories, objective
+function, solution verification. No GA/SA solver code yet — that is the next
+phase. All 136 QAPLIB instances read correctly; all 128 sample solutions load,
+normalize, and verify clean.
+
+## Layout & toolchain
+
+- **JDK 11+** (`javac --release 11` enforced), no build tool, no dependencies.
+- Production code under `src/main/`, test harnesses under `src/test/`
+  (plain main-class runners, exit code 0 = PASS, 1 = failure).
+- Packages are capitalized by project convention: `qapSolver.Model`,
+  `qapSolver.Reader`, `qapSolver.Objective`.
+
+Build & run everything:
+
+```
+javac --release 11 -d out/main $(find src/main -name '*.java')
+javac --release 11 -cp out/main -d out/test $(find src/test -name '*.java')
+java -cp out/main:out/test qapSolver.Reader.InstanceReaderTest
+java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
+java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
+java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
+```
+
+Test harnesses default to `QAPData/qapdata` / `QAPData/qapsoln` relative to the
+working directory (repo root); both can be overridden via args.
+
+## Architecture
+
+### `qapSolver.Model` — domain types
+
+| Class | Responsibility |
+|---|---|
+| `QAPInstance` | Immutable instance: name, size n, matrices A and B as read from the `.dat` (A first). No symmetry/zero-diagonal assumptions. Getters expose internal arrays by design (hot loops) — do not mutate. |
+| `QAPSolution` *(abstract)* | Full common solution state: `instanceName`, objective value, 0-based permutation, size, and `isValid()`. Constructor takes the `QAPInstance`, validates the permutation (bijection, length = n) and **auto-verifies** via `SolutionVerifier` — valid ⇔ claimed value reproduced by the objective. Subclasses only express provenance. Future solver individuals extend this same base. |
+| `SampleQAPSolution` | A `.sln` reference solution. After reader normalization all 128 are `isValid()=true`. |
+| `CustomSolution` | Hand-crafted / solver-produced solution; same constructor shape `(instance, value, permutation)`. |
+| `Permutations` | `inverseOf(p)`: converts between the two QAPLIB permutation conventions. Needed again for the future `.sln` writer. |
+
+### `qapSolver.Reader` — parsing and access
+
+| Class | Responsibility |
+|---|---|
+| `InstanceReader` | Strict `.dat` parser: exactly `1 + 2n²` whitespace/comma-separated integer tokens, loud failure on drift. |
+| `SolutionReader` | Strict `.sln` parser (`2 + n` tokens) requiring the matching `QAPInstance` (name and n cross-checked). Applies three normalizations (below). |
+| `InstanceRepository` | Name-based access to the `.dat` directory: `get(name)`, `getFamily(prefix)` (exact family match, `familyOf` = alphabetic prefix), `getAll()`, `listNames()`. No caching; sorted, deterministic. |
+| `SolutionRepository` | Mirror over `.sln`; needs an `InstanceRepository` (construction verifies against the instance). Adds `find(name)` → `Optional` (8 instances have no `.sln`). |
+| `QAPDataset` | Facade pairing both sides by name: `getInstance`, `findSolution`, `pairs()` (all 136, solution where present), plus repository accessors. |
+| `RepositoryFiles` | Package-private shared directory listing. |
+
+### `qapSolver.Objective` — evaluation
+
+| Class | Responsibility |
+|---|---|
+| `ObjectiveFunction` | `cost(p) = Σᵢ Σⱼ A[i][j]·B[p(i)][p(j)]` — full O(n²), no symmetry assumed, diagonals included, `long` accumulation, primitive loops. Overloads: raw `int[]` (hot path) and `QAPSolution`. |
+| `SolutionVerifier` | `verify(instance, solution)`: recomputes and compares against the claimed value. Mechanical; quirk-free. |
+
+## `.sln` normalizations (SolutionReader)
+
+Every solution in memory obeys one set of conventions; files are normalized on
+the way in:
+
+1. **Indexing** — 1-based files shifted to 0-based; already-0-based (tai40a)
+   kept; anything else rejected.
+2. **kra32 header correction** — header 88900 is a known QAPLIB typo (belongs
+   to kra30a); corrected to the true optimum **88700** only when the exact
+   documented situation is present (name kra32 + header 88900 + permutation
+   evaluating to 88700). Never a blanket trust-the-permutation rule.
+3. **Orientation** — value-driven, no hardcoded name list: if the claimed value
+   reproduces only on the inverted permutation, the inversion is stored. This
+   normalizes the eight inverse-convention files (esc128, kra30a, kra30b,
+   ste36c, tai60a, tai80a, tho30, tho150) to the standard facility→location
+   convention.
+
+**Future `.sln` writer must reverse this**: re-invert those eight files (and
+kra32's on-disk header, if byte-faithful) to match their file conventions —
+use `Permutations.inverseOf`.
+
+## Test coverage (all PASS at handoff)
+
+- `InstanceReaderTest` — reads all 136 `.dat` (strict token counts), reproduces
+  all 128 `.sln` values under the standard convention with its own independent
+  cost loop (127 direct + kra32 corrected→88700), verifies the missing-`.sln`
+  set is exactly {esc32a–d, esc32h, esc64a, tai10a, tai10b}, and fails if any
+  file matches only inverse orientation (= reader missed normalization).
+- `InstanceRepositoryTest` — counts vs dataset facts (136 total, 28 tai,
+  13 sko), sorted determinism, `getAll ≡ listNames`, exact-prefix family
+  matching, unknown names throw.
+- `QAPDatasetTest` — 136 pairs, 128 with solution, unmatched = known 8,
+  per-pair name/size agreement, 26 tai solutions, `find` empty vs `get` throw.
+- `SolutionVerifierTest` — 128/128 samples `isValid()=true` (8 of them via
+  normalization), `isValid()` ≡ `verify()` everywhere, kra32 carries corrected
+  88700, tampered-value negative controls, `CustomSolution` valid/invalid
+  construction.
+
+## Decisions log (why it is the way it is)
+
+- **Long accumulation everywhere** — random tai100b solutions approach
+  `Integer.MAX_VALUE`; entries up to ~2.9e8 per product (tai15b).
+- **Internal arrays exposed, not copied** — hot-loop performance beats
+  defensive copying; documented on every getter.
+- **Strict token counts in readers** — format drift fails loudly instead of
+  producing silently wrong instances.
+- **Validity in the base class, auto-run at construction** — every solution
+  object self-reports whether its claimed value is real.
+- **Value-driven normalization over hardcoded lists** — orientation inversion
+  triggers on evidence (value reproduces inverted), not on names; only the
+  kra32 correction is name-guarded because a typo can't be detected otherwise.
+- **No caching in repositories** — a solver run loads few instances; callers
+  hold references.
+- **Quirk knowledge lives in tests as exact expected sets** — a real reader
+  bug cannot hide as a "quirk".
+
+## Next phase (not started)
+
+Island-Model GA + SA hybrid per CLAUDE.md: solver-side `QAPSolution`
+subclasses, delta (swap) evaluation — asymmetric instances need the general
+two-orientation delta formula — population/island infrastructure, migration,
+SA local search, presets per instance class (see the characteristics-CSV
+section in CLAUDE.md).
