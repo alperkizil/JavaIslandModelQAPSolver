@@ -1,9 +1,11 @@
-# QAPLIB — Quadratic Assignment Problem Library (working copy)
+# JavaIslandModelQAPSolver
 
-Mirror of the QAPLIB benchmark set (Burkard, Karisch & Rendl; later maintained by
-Hahn & Anjos), obtained from the University of Edinburgh DataShare deposit
-[DS_10283_4390](https://datashare.ed.ac.uk/handle/10283/4390), plus dataset
-analysis produced while building an Island-Model GA solver for it.
+An Island-Model GA + SA hybrid solver for the Quadratic Assignment Problem,
+written in Java (in design phase — no code yet). Includes a mirror of the QAPLIB
+benchmark set (Burkard, Karisch & Rendl; later maintained by Hahn & Anjos),
+obtained from the University of Edinburgh DataShare deposit
+[DS_10283_4390](https://datashare.ed.ac.uk/handle/10283/4390), plus the dataset
+characterization driving the solver design.
 
 ## Contents
 
