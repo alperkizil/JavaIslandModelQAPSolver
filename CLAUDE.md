@@ -1,5 +1,20 @@
 # CLAUDE.md
 
+## Working rules (user's standing commands)
+
+The user drives this project step by step, using Claude like an IDE. Obey these
+at all times:
+
+1. **No yapping.** Describe only relevant things; stay problem-focused. No
+   filler, no restating what the user already knows, no unsolicited surveys of
+   options.
+2. **Never start coding until explicitly told to.** Discussion and design first;
+   code only on an explicit "go" from the user.
+3. **Never assume.** If anything is ambiguous or underspecified, ask the user
+   instead of picking a default silently.
+4. **Step-by-step development.** The GA solver is built incrementally in small,
+   user-directed steps — do the step that was asked, then stop; don't run ahead.
+
 ## Project
 
 **JavaIslandModelQAPSolver** — an Island-Model GA + Simulated Annealing hybrid
