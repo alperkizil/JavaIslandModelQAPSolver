@@ -11,10 +11,11 @@ function, solution verification. All 136 QAPLIB instances read correctly; all
 128 sample solutions load, normalize, and verify clean. `qapSolver.Random`
 provides seeded, thread-reproducible randomness. The solver skeleton is in
 place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
-(the composed generational memetic GA plus one abstract class per step) — all
-contracts, no concrete operators yet. The skeleton is compile-verified only;
-its dedicated test harness was deliberately deferred and should land with the
-first concrete steps.
+(the composed generational memetic GA plus one abstract class per step). The
+first concrete operator has landed: `qapSolver.GA.Initialization.RandomInitializer`
+(step (a), uniform random, harness-tested). The skeleton itself is still
+compile-verified only; its dedicated test harness remains deferred and should
+land with the next concrete steps.
 
 ## Layout & toolchain
 
@@ -34,6 +35,7 @@ java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
+java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 ```
 
 Test harnesses default to `QAPData/qapdata` / `QAPData/qapsoln` relative to the
@@ -104,6 +106,16 @@ working directory (repo root); both can be overridden via args.
 | `ElitePreserver` *(abstract)* | Step (g): two-phase bracket — `extract` (references-as-snapshots) before breeding, `reinsert` after replacement — composing with any replacement strategy; empty extract = elitism off; stateless between phases; both phases share one timer (two invocations per generation). |
 | `LocalImprovement` *(abstract)* | Step (h): bulk memetic slot between evaluation and replacement; budget policy internal (all/top-k/stagnation-triggered). Exact-fitness results in input order; improvement is the goal, not a guarantee (best-visited convention). Mutable scratch inside, immutable boundary out; honest counting (`countDeltaEvaluations` vs `countFullEvaluation`). Prerequisite: the general two-orientation delta utility (37 asymmetric instances). |
 
+### `qapSolver.GA.Initialization` — initialization strategies
+
+Concrete `PopulationInitializer`s. Package convention set here: `qapSolver.GA`
+holds the framework (abstract steps + the composed engine); concrete operators
+live in per-role subpackages.
+
+| Class | Responsibility |
+|---|---|
+| `RandomInitializer` | Uniform random initialization: μ (sole constructor parameter, ≥ 1) candidates, each a fresh identity array Fisher–Yates-shuffled on the context's stream — independent uniform draws from all n! permutations. No operator-held randomness: the batch is a pure function of (master seed, stream id). Duplicates permitted (duplicate-free is a future sibling strategy). |
+
 ## `.sln` normalizations (SolutionReader)
 
 Every solution in memory obeys one set of conventions; files are normalized on
@@ -149,6 +161,14 @@ use `Permutations.inverseOf`.
   range + uniformity; shuffle multiset/bijection/determinism/6-ordering
   uniformity; 8 threads racing a shared `RandomSource` reproduce the
   sequential sequences exactly. No dataset dependency.
+- `RandomInitializerTest` — constructor validation (μ < 1 throws); batch shape
+  (size μ, valid 0-based permutations, per-candidate owned arrays, no content
+  duplicates at n=20/μ=30); bit-exact stream replay from an independently
+  derived same-seed stream (candidate k = identity + k-th shuffle, in order,
+  no extra draws — pins that all randomness is the engine-owned context
+  stream); same-seed determinism vs cross-seed difference; n=1 edge;
+  3!-ordering uniformity through the operator; step-timer bookkeeping.
+  Synthetic instances only — no dataset dependency.
 - Engine/GA skeleton: **compile-verified only** for now — its dedicated
   harness was deliberately deferred and should land with the first concrete
   steps (context bookkeeping, candidate/population invariants, lifecycle
@@ -212,6 +232,10 @@ use `Permutations.inverseOf`.
 - **Engine-side contract checks** — batch sizes, ≥1 crossover child, and μ
   preservation are verified at every hand-off and throw immediately; a buggy
   step cannot silently corrupt a run.
+- **Concrete operators in per-role subpackages** — `qapSolver.GA` keeps the
+  framework (abstract steps + the composed engine); implementations group by
+  role (`qapSolver.GA.Initialization` first, more as steps get concrete), so
+  strategy families stay together as they multiply.
 - **Migration deferred to the island layer** — it is not a GA step (the
   engine would never call it), and its contract depends on island-layer
   decisions not yet made (synchronous vs mailbox exchange, topology,
@@ -224,7 +248,7 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- First concrete steps, each its own step-by-step piece: random initializer,
+- Remaining concrete steps, each its own step-by-step piece:
   exact evaluator over `ObjectiveFunction`, tournament selector, a
   position-preserving crossover, swap mutation, generational replacement,
   best-k elite preserver, NoOp improvement, and termination criteria
