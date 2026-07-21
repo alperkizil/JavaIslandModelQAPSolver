@@ -7,9 +7,10 @@ been built so far, the decisions behind it, and how to run it.
 ## Status
 
 Foundation layer complete: dataset model, readers/repositories, objective
-function, solution verification. No GA/SA solver code yet — that is the next
-phase. All 136 QAPLIB instances read correctly; all 128 sample solutions load,
-normalize, and verify clean.
+function, solution verification. All 136 QAPLIB instances read correctly; all
+128 sample solutions load, normalize, and verify clean. First solver
+infrastructure piece added: `qapSolver.Random` — seeded, thread-reproducible
+randomness. No GA/SA solver code yet — that is the next phase.
 
 ## Layout & toolchain
 
@@ -28,6 +29,7 @@ java -cp out/main:out/test qapSolver.Reader.InstanceReaderTest
 java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
+java -cp out/main:out/test qapSolver.Random.RandomizerTest
 ```
 
 Test harnesses default to `QAPData/qapdata` / `QAPData/qapsoln` relative to the
@@ -62,6 +64,14 @@ working directory (repo root); both can be overridden via args.
 |---|---|
 | `ObjectiveFunction` | `cost(p) = Σᵢ Σⱼ A[i][j]·B[p(i)][p(j)]` — full O(n²), no symmetry assumed, diagonals included, `long` accumulation, primitive loops. Overloads: raw `int[]` (hot path) and `QAPSolution`. |
 | `SolutionVerifier` | `verify(instance, solution)`: recomputes and compares against the claimed value. Mechanical; quirk-free. |
+
+### `qapSolver.Random` — deterministic randomness
+
+| Class | Responsibility |
+|---|---|
+| `RandomSource` | The single source of randomness for a run. Immutable (thread-safe) holder of the master seed; `derive(streamId)` returns the stream for that id — a pure function of `(masterSeed, streamId)`, independent of derivation order, thread count, and scheduling. No-arg constructor picks a per-JVM unique seed; `getMasterSeed()` exposes it for logging/replay. Derivation mirrors `SplittableRandom.split()` keyed by index: state = `mix64(masterSeed + (2i+1)·G)`, gamma = `mixGamma(masterSeed + (2i+2)·G)`. |
+| `Randomizer` | One derived stream; **deliberately not thread-safe** — each instance is confined to one thread (one island). API: `nextLong()`, `nextInt(bound)` (exact-uniform, power-of-two fast path + tail rejection), `nextDouble()` (53-bit, [0,1)), `shuffle(int[])` (in-place Fisher–Yates). |
+| `SplitMix64` | Package-private pure math: `GOLDEN_GAMMA`, `mix64` (Stafford variant 13), `mixGamma` (MurmurHash3 finalizer, forced odd, ≥24 bit transitions). Hand-rolled per the OOPSLA 2014 paper / Vigna's splitmix64.c so sequences are bit-identical on every JDK. |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -100,6 +110,14 @@ use `Permutations.inverseOf`.
   normalization), `isValid()` ≡ `verify()` everywhere, kra32 carries corrected
   88700, tampered-value negative controls, `CustomSolution` valid/invalid
   construction.
+- `RandomizerTest` — bit-exact against Vigna's splitmix64.c reference vectors
+  (independently cross-checked vs `java.util.SplittableRandom` at dev time);
+  derivation goldens computed from the spec formula in Python (freezes the
+  derivation, catches signed/overflow bugs); order-independence of `derive`;
+  1000-stream distinctness and gamma conditioning; `nextInt`/`nextDouble`
+  range + uniformity; shuffle multiset/bijection/determinism/6-ordering
+  uniformity; 8 threads racing a shared `RandomSource` reproduce the
+  sequential sequences exactly. No dataset dependency.
 
 ## Decisions log (why it is the way it is)
 
@@ -118,6 +136,16 @@ use `Permutations.inverseOf`.
   hold references.
 - **Quirk knowledge lives in tests as exact expected sets** — a real reader
   bug cannot hide as a "quirk".
+- **Derived streams instead of one shared RNG** — a single locked generator
+  would be thread-safe but not reproducible (scheduling decides interleaving).
+  One `RandomSource` derives per-island streams by id; thread confinement of
+  each `Randomizer` gives lock-free thread safety and scheduling-independent
+  determinism. Shared components (e.g. a future migration coordinator) get
+  their own dedicated stream id.
+- **Hand-rolled SplitMix64 over JDK generators** — `ThreadLocalRandom` is not
+  seedable; `SplittableRandom`'s sequence is an implementation detail a future
+  JDK may change; `java.util.Random` is a weak LCG with CAS overhead. ~40 lines
+  of published, vector-verified algorithm buy bit-identical runs on every JDK.
 
 ## Next phase (not started)
 
