@@ -3,6 +3,7 @@ package qapSolver.GA;
 import java.util.List;
 
 import qapSolver.Engine.AlgorithmContext;
+import qapSolver.Engine.AlgorithmStep;
 import qapSolver.Engine.Candidate;
 
 /**
@@ -18,9 +19,22 @@ import qapSolver.Engine.Candidate;
  * permutation of n = {@code context.getInstance().getSize()}; all randomness
  * drawn from the context's {@code Randomizer}. Future implementations:
  * uniform random shuffles, heuristic seeding, duplicate-free variants.
+ *
+ * <p>Implementations override {@link #doInitialize}; {@link #initialize} is
+ * the final, timed entry point (see {@link AlgorithmStep}).
  */
-public abstract class PopulationInitializer {
+public abstract class PopulationInitializer extends AlgorithmStep {
 
     /** Builds the unevaluated initial batch; see the class contract. */
-    public abstract List<Candidate> initialize(AlgorithmContext context);
+    public final List<Candidate> initialize(AlgorithmContext context) {
+        long start = System.nanoTime();
+        try {
+            return doInitialize(context);
+        } finally {
+            recordSince(start);
+        }
+    }
+
+    /** The initialization itself; bound by the class contract. */
+    protected abstract List<Candidate> doInitialize(AlgorithmContext context);
 }

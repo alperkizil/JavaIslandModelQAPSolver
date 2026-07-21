@@ -22,9 +22,22 @@ import java.util.List;
  * <li><b>Counting</b> — call {@code context.countFullEvaluation()} once per
  *     actual O(n²) computation; cache hits must not count.</li>
  * </ul>
+ *
+ * <p>Implementations override {@link #doEvaluate}; {@link #evaluate} is the
+ * final, timed entry point (see {@link AlgorithmStep}).
  */
-public abstract class FitnessEvaluator {
+public abstract class FitnessEvaluator extends AlgorithmStep {
 
     /** Evaluates the batch; see the class contract. */
-    public abstract List<EvaluatedCandidate> evaluate(List<Candidate> candidates, AlgorithmContext context);
+    public final List<EvaluatedCandidate> evaluate(List<Candidate> candidates, AlgorithmContext context) {
+        long start = System.nanoTime();
+        try {
+            return doEvaluate(candidates, context);
+        } finally {
+            recordSince(start);
+        }
+    }
+
+    /** The evaluation itself; bound by the class contract. */
+    protected abstract List<EvaluatedCandidate> doEvaluate(List<Candidate> candidates, AlgorithmContext context);
 }
