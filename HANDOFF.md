@@ -11,9 +11,10 @@ function, solution verification. All 136 QAPLIB instances read correctly; all
 128 sample solutions load, normalize, and verify clean. `qapSolver.Random`
 provides seeded, thread-reproducible randomness. The solver skeleton is in
 place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
-(the composed generational memetic GA plus one abstract class per step). The
-first concrete operator has landed: `qapSolver.GA.Initialization.RandomInitializer`
-(step (a), uniform random, harness-tested). The skeleton itself is still
+(the composed generational memetic GA plus one abstract class per step). First
+concrete operators are landing: `qapSolver.GA.Initialization.RandomInitializer`
+(step (a), uniform random) and `qapSolver.GA.Elitism.BestKElitePreserver`
+(step (g), best-k), both harness-tested. The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
 
@@ -36,6 +37,7 @@ java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
+java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
 ```
 
 Test harnesses default to `QAPData/qapdata` / `QAPData/qapsoln` relative to the
@@ -116,6 +118,12 @@ live in per-role subpackages.
 |---|---|
 | `RandomInitializer` | Uniform random initialization: μ (sole constructor parameter, ≥ 1) candidates, each a fresh identity array Fisher–Yates-shuffled on the context's stream — independent uniform draws from all n! permutations. No operator-held randomness: the batch is a pure function of (master seed, stream id). Duplicates permitted (duplicate-free is a future sibling strategy). |
 
+### `qapSolver.GA.Elitism` — elite preservation strategies
+
+| Class | Responsibility |
+|---|---|
+| `BestKElitePreserver` | Best-k elitism. Extract: references to the k lowest-fitness members, best first, (fitness, first-index) tie-break; k = 0 ⇒ elitism off (no separate NoOp class); k ≥ μ throws at extract. Reinsert per elite: presence judged by permutation content (`samePermutationAs`, never fitness); missing ⇒ overwrite the worst among unprotected slots — found/reinserted slots stay protected for the rest of the call (all-tied populations would otherwise evict elite #1 for elite #2), and duplicate-genotype elites collapse to one survivor. Deterministic, consumes no randomness. |
+
 ## `.sln` normalizations (SolutionReader)
 
 Every solution in memory obeys one set of conventions; files are normalized on
@@ -169,6 +177,16 @@ use `Permutations.inverseOf`.
   stream); same-seed determinism vs cross-seed difference; n=1 edge;
   3!-ordering uniformity through the operator; step-timer bookkeeping.
   Synthetic instances only — no dataset dependency.
+- `BestKElitePreserverTest` — constructor validation (k < 0 throws, 0/1 legal);
+  extract pick and best-first order with first-index tie-break, reference
+  snapshots, read-only population, k = 0 empty, k ≥ μ throws (k = μ−1 legal);
+  reinsert leaves present-by-reference and present-by-content populations
+  bit-identical; missing elites overwrite worst slots in order with size
+  preserved; the all-tied eviction trap (protected slots — both elites
+  survive, found slots not overwritten); duplicate-genotype collapse (one
+  survivor, no second slot burned); no-slot-left guard throws; both phases on
+  one timer (two invocations per generation). Synthetic members with
+  fabricated fitnesses — no dataset dependency.
 - Engine/GA skeleton: **compile-verified only** for now — its dedicated
   harness was deliberately deferred and should land with the first concrete
   steps (context bookkeeping, candidate/population invariants, lifecycle
@@ -251,7 +269,7 @@ use `Permutations.inverseOf`.
 - Remaining concrete steps, each its own step-by-step piece:
   exact evaluator over `ObjectiveFunction`, tournament selector, a
   position-preserving crossover, swap mutation, generational replacement,
-  best-k elite preserver, NoOp improvement, and termination criteria
+  NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
   with and/or combinators) — then an end-to-end smoke run on a small closed
   instance.
