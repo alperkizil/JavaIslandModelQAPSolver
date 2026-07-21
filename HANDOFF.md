@@ -12,9 +12,11 @@ function, solution verification. All 136 QAPLIB instances read correctly; all
 provides seeded, thread-reproducible randomness. The solver skeleton is in
 place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
 (the composed generational memetic GA plus one abstract class per step). First
-concrete operators are landing: `qapSolver.GA.Initialization.RandomInitializer`
-(step (a), uniform random) and `qapSolver.GA.Elitism.BestKElitePreserver`
-(step (g), best-k), both harness-tested. The skeleton itself is still
+concrete operators are landing, all harness-tested:
+`qapSolver.GA.Initialization.RandomInitializer` (step (a)), the
+`qapSolver.GA.Selection` package (step (c): tournament, roulette wheel, SUS,
+sigma scaling), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
+The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
 
@@ -37,6 +39,10 @@ java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
+java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
+java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
+java -cp out/main:out/test qapSolver.GA.Selection.StochasticUniversalSamplingSelectorTest
+java -cp out/main:out/test qapSolver.GA.Selection.SigmaScalingSelectorTest
 java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
 ```
 
@@ -118,6 +124,16 @@ live in per-role subpackages.
 |---|---|
 | `RandomInitializer` | Uniform random initialization: μ (sole constructor parameter, ≥ 1) candidates, each a fresh identity array Fisher–Yates-shuffled on the context's stream — independent uniform draws from all n! permutations. No operator-held randomness: the batch is a pure function of (master seed, stream id). Duplicates permitted (duplicate-free is a future sibling strategy). |
 
+### `qapSolver.GA.Selection` — parent selection strategies
+
+| Class | Responsibility |
+|---|---|
+| `TournamentSelector` | Probabilistic tournament (t ≥ 1, p ∈ (0, 1]): per pick, t uniform with-replacement contestants, ordered best-first (fitness ascending, ties by draw order), cascade accepts with probability p, last contestant as fallback. p = 1 ⇒ classic deterministic tournament; t = 1 ⇒ uniform selection; t > μ legal (saturates to always-best). Comparison-based ⇒ scale-free; the per-island pressure knob. |
+| `RankWeights` *(package-private)* | Shared per-generation linear-ranking table for the two rank samplers: unique worst-first ranking (fitness desc, index asc — total order, tie-safe), weight (2−s) + 2(s−1)·r/(μ−1) summing to μ, cumulative array; binary-search `sample` (roulette) and monotone `advance` (SUS); zero-weight ranks are unreachable by construction. |
+| `RouletteWheelSelector` | Independent spins over rank weights, s ∈ [1, 2] (1 = uniform; 2 = strongest, worst weight exactly 0 ⇒ never drawn). Rank basis keeps the wheel scale-free on QAP. Consumes exactly count doubles. |
+| `StochasticUniversalSamplingSelector` | One start double + count evenly spaced pointers over the same rank table: every member's copy count is its expectation floored or ceiled (minimal sampling variance). Result is Fisher–Yates-shuffled (count−1 ints) so the rank-ordered walk doesn't self-pair under the engine's consecutive pairing. |
+| `SigmaScalingSelector` | Standalone Watchmaker-style sigma scaling, roulette-sampled: per generation w = 1 + (mean−f)/2σ (minimization form), floored at 0.1 when ≤ 0, σ = 0 ⇒ uniform. Parameterless — pressure adapts to population statistics; the one proportional scheme that stays meaningful on QAP's compressed relative spreads. |
+
 ### `qapSolver.GA.Elitism` — elite preservation strategies
 
 | Class | Responsibility |
@@ -177,6 +193,26 @@ use `Permutations.inverseOf`.
   stream); same-seed determinism vs cross-seed difference; n=1 edge;
   3!-ordering uniformity through the operator; step-timer bookkeeping.
   Synthetic instances only — no dataset dependency.
+- `TournamentSelectorTest` — constructor validation (t, p, NaN-proof); bulk
+  contract (exact count, references only, population untouched, count = 0);
+  bit-exact stream replay of draw + stable sort + cascade with final
+  stream-position agreement; same-seed determinism / cross-seed difference;
+  pressure (t = 3 vs t = 1 buckets; the p knob via P(best) = 0.25 + 0.5p on
+  μ = 2; t = 50 ≫ μ saturation); timer. Synthetic members only.
+- `RouletteWheelSelectorTest` — s validation; bulk contract; bit-exact replay
+  against an independent transliteration of the ranking spec; s = 2 draws the
+  zero-weight worst exactly never and the best ≈ 40%; s = 1 uniform; μ = 1
+  edge; determinism; timer. Synthetic members only.
+- `StochasticUniversalSamplingSelectorTest` — s validation; bulk contract;
+  bit-exact replay (table + pointer walk + shuffle); the SUS guarantee across
+  seeds (exact counts {4,3,2,1,0} where expectations are integers, floor/ceil
+  bounds at count = 7); shuffle breaks fitness monotonicity; μ = 1 edge;
+  determinism; timer. Synthetic members only.
+- `SigmaScalingSelectorTest` — bulk contract; bit-exact replay (mean/σ,
+  floored weights, spins); σ = 0 uniform; > 2σ outlier floored (rare, never
+  extinct); compressed-spread pressure (0.9% spread → ~8× best/worst where a
+  raw wheel would flatten); μ = 1 edge; determinism; timer. Synthetic members
+  only.
 - `BestKElitePreserverTest` — constructor validation (k < 0 throws, 0/1 legal);
   extract pick and best-first order with first-index tie-break, reference
   snapshots, read-only population, k = 0 empty, k ≥ μ throws (k = μ−1 legal);
@@ -250,6 +286,14 @@ use `Permutations.inverseOf`.
 - **Engine-side contract checks** — batch sizes, ≥1 crossover child, and μ
   preservation are verified at every hand-off and throw immediately; a buggy
   step cannot silently corrupt a run.
+- **Selection: comparison, rank or adaptive — never raw proportional** —
+  tournament is the probabilistic cascade (t, p); roulette and SUS sample
+  shared linear rank weights (s ∈ [1, 2]) because raw fitness-proportional
+  pressure collapses on QAP's compressed relative spreads; sigma scaling is
+  the sanctioned proportional form (population-statistics normalization,
+  deliberately standalone in Watchmaker shape rather than a weighting×sampler
+  matrix). SUS shuffles its rank-ordered picks so the engine's consecutive
+  pairing doesn't self-pair.
 - **Concrete operators in per-role subpackages** — `qapSolver.GA` keeps the
   framework (abstract steps + the composed engine); implementations group by
   role (`qapSolver.GA.Initialization` first, more as steps get concrete), so
@@ -267,7 +311,7 @@ use `Permutations.inverseOf`.
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
 - Remaining concrete steps, each its own step-by-step piece:
-  exact evaluator over `ObjectiveFunction`, tournament selector, a
+  exact evaluator over `ObjectiveFunction`, a
   position-preserving crossover, swap mutation, generational replacement,
   NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
