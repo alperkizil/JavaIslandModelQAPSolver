@@ -8,9 +8,13 @@ been built so far, the decisions behind it, and how to run it.
 
 Foundation layer complete: dataset model, readers/repositories, objective
 function, solution verification. All 136 QAPLIB instances read correctly; all
-128 sample solutions load, normalize, and verify clean. First solver
-infrastructure piece added: `qapSolver.Random` — seeded, thread-reproducible
-randomness. No GA/SA solver code yet — that is the next phase.
+128 sample solutions load, normalize, and verify clean. `qapSolver.Random`
+provides seeded, thread-reproducible randomness. The solver skeleton is in
+place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
+(the composed generational memetic GA plus one abstract class per step) — all
+contracts, no concrete operators yet. The skeleton is compile-verified only;
+its dedicated test harness was deliberately deferred and should land with the
+first concrete steps.
 
 ## Layout & toolchain
 
@@ -42,7 +46,7 @@ working directory (repo root); both can be overridden via args.
 | Class | Responsibility |
 |---|---|
 | `QAPInstance` | Immutable instance: name, size n, matrices A and B as read from the `.dat` (A first). No symmetry/zero-diagonal assumptions. Getters expose internal arrays by design (hot loops) — do not mutate. |
-| `QAPSolution` *(abstract)* | Full common solution state: `instanceName`, objective value, 0-based permutation, size, and `isValid()`. Constructor takes the `QAPInstance`, validates the permutation (bijection, length = n) and **auto-verifies** via `SolutionVerifier` — valid ⇔ claimed value reproduced by the objective. Subclasses only express provenance. Future solver individuals extend this same base. |
+| `QAPSolution` *(abstract)* | Full common solution state: `instanceName`, objective value, 0-based permutation, size, and `isValid()`. Constructor takes the `QAPInstance`, validates the permutation (bijection, length = n) and **auto-verifies** via `SolutionVerifier` — valid ⇔ claimed value reproduced by the objective. Subclasses only express provenance. The verified **boundary** type (run results, future `.sln` writer) — *not* the evolving individual: that is `qapSolver.Engine`'s Candidate/EvaluatedCandidate pair, because per-construction O(n²) verification is exactly what the hot loop must not pay. |
 | `SampleQAPSolution` | A `.sln` reference solution. After reader normalization all 128 are `isValid()=true`. |
 | `CustomSolution` | Hand-crafted / solver-produced solution; same constructor shape `(instance, value, permutation)`. |
 | `Permutations` | `inverseOf(p)`: converts between the two QAPLIB permutation conventions. Needed again for the future `.sln` writer. |
@@ -72,6 +76,33 @@ working directory (repo root); both can be overridden via args.
 | `RandomSource` | The single source of randomness for a run. Immutable (thread-safe) holder of the master seed; `derive(streamId)` returns the stream for that id — a pure function of `(masterSeed, streamId)`, independent of derivation order, thread count, and scheduling. No-arg constructor picks a per-JVM unique seed; `getMasterSeed()` exposes it for logging/replay. Derivation mirrors `SplittableRandom.split()` keyed by index: state = `mix64(masterSeed + (2i+1)·G)`, gamma = `mixGamma(masterSeed + (2i+2)·G)`. |
 | `Randomizer` | One derived stream; **deliberately not thread-safe** — each instance is confined to one thread (one island). API: `nextLong()`, `nextInt(bound)` (exact-uniform, power-of-two fast path + tail rejection), `nextDouble()` (53-bit, [0,1)), `shuffle(int[])` (in-place Fisher–Yates). |
 | `SplitMix64` | Package-private pure math: `GOLDEN_GAMMA`, `mix64` (Stafford variant 13), `mixGamma` (MurmurHash3 finalizer, forced odd, ≥24 bit transitions). Hand-rolled per the OOPSLA 2014 paper / Vigna's splitmix64.c so sequences are bit-identical on every JDK. |
+
+### `qapSolver.Engine` — metaheuristic-generic runtime
+
+| Class | Responsibility |
+|---|---|
+| `AlgorithmEngine` *(abstract)* | Lifecycle base of every engine: `final` `initialize()`/`step()`/`run()`/`shouldTerminate()` around `protected` `doInitialize()`/`doStep()` hooks. Generation 0 = evaluated initial population; the counter advances *before* the step body (stamps carry the in-progress generation). Owns the `TerminationCriterion` slot (stop flag checked first, in the loop only). `getBestSolution()` converts the incumbent to an auto-verifying `CustomSolution`. Island coordinators drive `initialize()`/`step()` directly and own run-end semantics. |
+| `AlgorithmContext` | Per-run (= per-island) state hub, state-not-config: instance, `Randomizer` stream, generation + full/delta evaluation counters, incumbent (private copy + found-at stamps) behind the `offerIncumbent` choke point (strict improvement only, fires `onNewBest`), derived `generationsSinceImprovement()`, `start()`-gated clock, observer dispatch, and volatile `requestStop()` — the only cross-thread member. |
+| `AlgorithmStep` *(abstract)* | Base of every step: built-in wall-clock timing (total nanos + invocation count). Step abstracts expose `final` timed entry points delegating to `protected doX` hooks, so implementations are always measured. Stateful ⇒ strictly one step instance per engine, thread-confined. Invocations mean *calls at the step's own granularity* (pairs, children, batches, phases); cross-step comparison uses totals. |
+| `Candidate` | Mutable unevaluated permutation — the breeding scratch. Owns its array, hot-path trust (null check only). Single-owner hand-off: creator → mutation → evaluator, which consumes it. |
+| `EvaluatedCandidate` | Immutable permutation + exact `long` fitness. The evaluator moves a Candidate's array in (zero-copy evaluation path); `toCandidate()` copies back to mutable land; `samePermutationAs`/`permutationHash` for dedup by permutation content (never fitness equality — tie-heavy families). `equals`/`hashCode` keep identity semantics. |
+| `Population` | Mutable pool of immutable members — the type-state boundary (anything inside is evaluated; the unevaluated batch is a plain `List<Candidate>`, never a Population). Enforces non-null members and uniform n. Minimization-native `best()`/`worst()` (+ indices, first-index ties); `set` returns the evicted member. |
+| `FitnessEvaluator` *(abstract)* | Bulk `List<Candidate>` → `List<EvaluatedCandidate>`. Contract: ownership transfer, input-order results (what keeps parallel evaluation replay-identical), exact values, one `countFullEvaluation()` per actual O(n²) computation (cache hits uncounted). The seam for the future caching decorator and master–slave evaluator. |
+| `TerminationCriterion` *(abstract)* | Read-only stop check between generations; must not consume randomness (would shift the stream and break replay). Never re-checks the external stop flag — the engine loop owns that. |
+| `EvolutionObserver` *(abstract)* | Read-only no-op hooks: `onRunStart`, `onGenerationComplete(ctx, pop)` (generation 0 included), `onNewBest` (strict improvements only), `onRunEnd` (fired by `run()`; external drivers own it). Engine-thread only. |
+
+### `qapSolver.GA` — the genetic algorithm
+
+| Class | Responsibility |
+|---|---|
+| `GeneticAlgorithm` *(final)* | The composition: generational memetic cycle over the eight slots — extract elites (g) → bulk-select 2λ parents (c) → pair-breed with per-pair crossover rate, clone-through via `toCandidate()`, truncate to exactly λ (d) → mutate every child (e) → evaluate + offer (b) → improve + offer (h) → replace (f) → reinsert (g). Engine-side contract checks (batch sizes, ≥1 child per crossover call, μ preserved by replacement and reinsertion) throw `IllegalStateException` immediately. μ comes from the initializer's batch; numeric config is only `offspringCount` (λ) and `crossoverRate`. All slots required — "off" is a NoOp step, never null. A differently shaped cycle (steady-state, SA) is a sibling under `AlgorithmEngine`. |
+| `PopulationInitializer` *(abstract)* | Step (a): unevaluated generation-0 batch; the returned list's size *is* μ for the whole run. |
+| `ParentSelector` *(abstract)* | Step (c): bulk selection of `count` parent references (repeats normal, population untouched); per-generation setup paid once. Minimization-native: comparison-based schemes fit; roulette needs an impl-supplied transform. |
+| `CrossoverOperator` *(abstract)* | Step (d): two evaluated parents → 1+ fresh unevaluated children. Pure — the rate lives in the engine's breeding loop. QAP note: position-preserving recombination matches assignment semantics; order-based (OX) preserves the TSP invariant. |
+| `MutationOperator` *(abstract)* | Step (e): in-place variation of a `Candidate` — stale fitness is unrepresentable by signature. Rate/strength operator-internal; engine calls unconditionally. Guidance recorded: autocorrelation length ~0.25·n ⇒ n/4-swap hot kick, 1–2 swaps cold. |
+| `ReplacementStrategy` *(abstract)* | Step (f): survivor selection, exactly μ out; in-place steady-state or fresh generational both legal. Elitism contractually excluded (the bracket handles it). Dedup variants compare permutations, never fitness. |
+| `ElitePreserver` *(abstract)* | Step (g): two-phase bracket — `extract` (references-as-snapshots) before breeding, `reinsert` after replacement — composing with any replacement strategy; empty extract = elitism off; stateless between phases; both phases share one timer (two invocations per generation). |
+| `LocalImprovement` *(abstract)* | Step (h): bulk memetic slot between evaluation and replacement; budget policy internal (all/top-k/stagnation-triggered). Exact-fitness results in input order; improvement is the goal, not a guarantee (best-visited convention). Mutable scratch inside, immutable boundary out; honest counting (`countDeltaEvaluations` vs `countFullEvaluation`). Prerequisite: the general two-orientation delta utility (37 asymmetric instances). |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -118,6 +149,10 @@ use `Permutations.inverseOf`.
   range + uniformity; shuffle multiset/bijection/determinism/6-ordering
   uniformity; 8 threads racing a shared `RandomSource` reproduce the
   sequential sequences exactly. No dataset dependency.
+- Engine/GA skeleton: **compile-verified only** for now — its dedicated
+  harness was deliberately deferred and should land with the first concrete
+  steps (context bookkeeping, candidate/population invariants, lifecycle
+  guards, stubbed-step call-order test).
 
 ## Decisions log (why it is the way it is)
 
@@ -146,11 +181,60 @@ use `Permutations.inverseOf`.
   seedable; `SplittableRandom`'s sequence is an implementation detail a future
   JDK may change; `java.util.Random` is a weak LCG with CAS overhead. ~40 lines
   of published, vector-verified algorithm buy bit-identical runs on every JDK.
+- **Typed step slots over a uniform pipeline** — one abstract class per GA
+  step with a typed contract, composed by the engine in a fixed cycle.
+  Compile-time data flow beats blackboard coupling through shared state; a
+  differently shaped cycle is a sibling engine, not a reordering.
+- **Candidate/EvaluatedCandidate type-state split** — fitness exists only on
+  the immutable evaluated form; mutation accepts only the mutable unevaluated
+  form, so a stale fitness is unrepresentable. Evaluation moves arrays rather
+  than copying (deliberate copies only at breeding, `toCandidate()`, and the
+  incumbent snapshot). `QAPSolution` stays the boundary type: per-construction
+  O(n²) auto-verification is what the hot loop must not pay.
+- **Self-timing steps** — `AlgorithmStep` wraps every public step entry point
+  final-with-finally around a protected hook and accumulates wall time;
+  measurement is a framework property, not engine etiquette. Consequence:
+  step instances are stateful ⇒ per-engine, never shared across islands.
+- **Lifecycle final in the base** — clock start, notification order, and
+  advance-before-step-body are written once in `AlgorithmEngine`; generation
+  stamps cannot drift and every engine behaves identically under a
+  coordinator.
+- **Incumbent single-writer** — only the engine offers candidates, only via
+  `offerIncumbent` (strict improvement, private copy, three found-at stamps,
+  then `onNewBest`). Steps never touch incumbent state.
+- **Rate placement asymmetry** — the crossover rate is an engine breeding
+  parameter ("no crossover" is a different data path: clone-through); mutation
+  rate/strength is operator-internal ("no mutation" is identity, no engine
+  branch).
+- **Elitism as a two-phase bracket** — extract before breeding, reinsert after
+  replacement; composes with any `ReplacementStrategy`, which stays
+  contractually elitism-free; an empty extract turns elitism off.
+- **Engine-side contract checks** — batch sizes, ≥1 crossover child, and μ
+  preservation are verified at every hand-off and throw immediately; a buggy
+  step cannot silently corrupt a run.
+- **Migration deferred to the island layer** — it is not a GA step (the
+  engine would never call it), and its contract depends on island-layer
+  decisions not yet made (synchronous vs mailbox exchange, topology,
+  emigrant/immigrant split). The seams are ready: externally driven
+  `initialize()`/`step()`, `Population.set`, immutable shareable members, and
+  a dedicated coordinator stream id in `RandomSource`.
 
 ## Next phase (not started)
 
-Island-Model GA + SA hybrid per CLAUDE.md: solver-side `QAPSolution`
-subclasses, delta (swap) evaluation — asymmetric instances need the general
-two-orientation delta formula — population/island infrastructure, migration,
-SA local search, presets per instance class (see the characteristics-CSV
-section in CLAUDE.md).
+- Engine/GA test harness (deferred from the skeleton step): context
+  bookkeeping, candidate/population invariants, lifecycle guards, then a
+  stubbed-step test pinning the engine's call order and contract checks.
+- First concrete steps, each its own step-by-step piece: random initializer,
+  exact evaluator over `ObjectiveFunction`, tournament selector, a
+  position-preserving crossover, swap mutation, generational replacement,
+  best-k elite preserver, NoOp improvement, and termination criteria
+  (max-generations / eval-budget / wall-clock / target-value / stagnation
+  with and/or combinators) — then an end-to-end smoke run on a small closed
+  instance.
+- Delta (swap) evaluation utility — the general two-orientation formula for
+  the 37 asymmetric instances — prerequisite for real `LocalImprovement`
+  implementations (2-swap descent, SA).
+- Island layer (`qapSolver.Island`): coordinator driving
+  `initialize()`/`step()`, the Migration abstraction (designed there, with
+  its collaborators), per-island contexts and streams, presets per instance
+  class (see the characteristics-CSV section in CLAUDE.md).
