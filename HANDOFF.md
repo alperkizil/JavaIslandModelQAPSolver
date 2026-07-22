@@ -18,8 +18,8 @@ concrete operators are landing, all harness-tested:
 sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
 PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
 multi-swap), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
-`qapSolver.Engine.Evaluation` package (step (b): exact baseline evaluator;
-caching decorator and master–slave parallel evaluator to follow).
+`qapSolver.Engine.Evaluation` package (step (b): exact baseline evaluator
+and the caching LRU decorator; master–slave parallel evaluator to follow).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -43,6 +43,7 @@ java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.ExactEvaluatorTest
+java -cp out/main:out/test qapSolver.Engine.Evaluation.CachingEvaluatorTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
@@ -122,6 +123,7 @@ order is therefore fixed: cache outermost, e.g.
 | Class | Responsibility |
 |---|---|
 | `ExactEvaluator` | The baseline: sequential full O(n²) `ObjectiveFunction` evaluation per candidate on the engine thread, one `countFullEvaluation()` tick each, arrays moved zero-copy into the results, input order, no randomness. The reference every decorated/parallel stack must reproduce value-for-value. |
+| `CachingEvaluator` | Decorator over any evaluator: per batch, cache hits answered directly, same-batch repeats answered by their first occurrence, only genuinely new permutations delegated (all-hit batches never invoke the inner evaluator). Ownership holds on every path (hits/repeats consume their own candidate's array zero-copy). Never counts evaluations itself — only the inner evaluator computes. Bounded LRU (capacity constructor param; hits refresh recency); keys are defensive copies, lookups transient no-copy keys. `getHits`/`getMisses`/`getCachedCount` are the per-family measurement that decides whether the decorator earns its place. Engine-thread only ⇒ always the outermost layer. |
 
 ### `qapSolver.GA` — the genetic algorithm
 
@@ -226,6 +228,18 @@ use `Permutations.inverseOf`.
   5+3); empty-batch and n=1 edges; no randomness consumed (stream-position
   agreement); timer (invocations = batches). Synthetic instances only — no
   dataset dependency.
+- `CachingEvaluatorTest` — constructor validation (null inner, capacity < 1);
+  miss path (exact values, order, zero-copy ownership, delegation observed
+  via a recording inner evaluator); hit path (same content as fresh arrays:
+  zero inner invocations, zero new evaluation counts, results own the new
+  arrays); mixed batches (inner sees exactly the misses in input order);
+  same-batch repeats (2 unique of 4 candidates ⇒ 2 evaluations, every slot
+  owns its own array, one cache entry per content); LRU both ways (oldest
+  evicted at capacity; hit-refreshed recency flips the victim); equivalence
+  sweep vs undecorated ExactEvaluator on overlapping batches (identical
+  fitnesses, 6 vs 11 evaluations); no randomness consumed; timer (decorator
+  counts every call, inner only delegated ones). Synthetic instances only —
+  no dataset dependency.
 - `RandomInitializerTest` — constructor validation (μ < 1 throws); batch shape
   (size μ, valid 0-based permutations, per-candidate owned arrays, no content
   duplicates at n=20/μ=30); bit-exact stream replay from an independently
@@ -409,9 +423,8 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- Remaining evaluators of the designed trio: `CachingEvaluator` (decorator,
-  bounded LRU, hit/miss counters), `MultithreadedExactEvaluator` (master–
-  slave leaf).
+- Remaining evaluator of the designed trio: `MultithreadedExactEvaluator`
+  (master–slave leaf).
 - Remaining concrete steps, each its own step-by-step piece:
   generational replacement, NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
