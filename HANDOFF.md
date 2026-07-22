@@ -33,7 +33,9 @@ The first end-to-end run of the composed cycle
 landed as `qapSolver.Main` — the GA smoke runner, now sweeping the whole
 QAPLIB deposit by default (136 instances × seeds 1–5 = 680 runs, all
 auto-verified valid, 87 matched their `.sln` reference, ~90 s sequential;
-evaluator selectable sequential/parallel with optional cache). The engine/GA
+evaluator selectable sequential/parallel with optional cache). The first
+parameter study landed as `qapSolver.CrossoverRateExperiment` — the PMX
+rate swept over six values, findings in "Next phase". The engine/GA
 skeleton's dedicated unit harness remains deferred and should land with the
 next concrete steps.
 
@@ -60,6 +62,8 @@ Build & run everything:
 javac --release 11 -d out/main $(find src/main -name '*.java')
 javac --release 11 -cp out/main -d out/test $(find src/test -name '*.java')
 java -cp out/main qapSolver.Main    # GA smoke run; [-v] [-data <dir>] [-soln <dir>] [instance ...]
+java -cp out/main qapSolver.CrossoverRateExperiment    # PMX-rate study, same flags; ~8 min
+
 java -cp out/main:out/test qapSolver.Reader.InstanceReaderTest
 java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
@@ -256,6 +260,12 @@ live in per-role subpackages.
 | Class | Responsibility |
 |---|---|
 | `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: every instance in the data directory by default (136; the eight file-less instances get their reference from the reader's built-in optima, so every row reports a real gap), seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, 500 generations. Evaluator stack parameterized: `evaluatorWorkers` > 1 swaps the sequential leaf for the master–slave `MultithreadedExactEvaluator` (verified value-identical to sequential; pool shut down after each run), `cacheCapacity` = 0 drops the cache decorator (cache always outermost per the package contract; columns print n/a without it). CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run lines under a column header (seed, best, gap, found-gen, found-ev, evals, cache, time) with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
+
+### `qapSolver.CrossoverRateExperiment` — crossover-rate study
+
+| Class | Responsibility |
+|---|---|
+| `CrossoverRateExperiment` | The first parameter study: a deliberate duplicate of `Main` (which stays untouched as the canonical smoke runner) repeating the full sweep once per PMX rate — {0.50, 0.60, 0.70, 0.80, 0.85, 0.90} — with the same seeds per instance (paired runs) and every other parameter pinned to the smoke setup. Per rate: one summary line per instance (per-run lines dropped; INVALID/BELOW-REF markers stay loud). Ends with the cross-rate comparison: solved instances/runs (reference matched), mean/median over instances of the per-instance mean gap (reference-0 esc16f excluded from gap aggregation only), the optimality rank — per instance the rates ranked 1..k by mean best value, fractional on ties (plateau families tie in bulk), averaged — best-count (holds/ties the lowest mean), and a family × rate mean-gap table. Instances are compared only if complete under every rate. CLI and exit codes identical to `Main`. |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -609,6 +619,25 @@ use `Permutations.inverseOf`.
   tai256c ~10 s, tai150b/tho150 ~4 s.
   Termination extras (target-value criterion, and/or Composite combinators)
   as needed.
+- ~~Crossover-rate study~~ — done (`CrossoverRateExperiment`, July 2026): PMX
+  rate over {0.50, 0.60, 0.70, 0.80, 0.85, 0.90}, full library × seeds 1–5
+  per rate (4080 runs, all valid, ~8.5 min sequential). The two criteria
+  split. Exact-optimum hits favor high rates — instances solved at least
+  once: 0.90 → 34, 0.80 → 32, 0.60/0.70 → 28, 0.50/0.85 → 27; the surplus is
+  small structured easies (chr12c, chr15a, chr18b, scr15, lipa20a, rou12),
+  every rate solves the same n ≤ 20 / esc-plateau core. Solution quality
+  favors low rates *monotonically*: average optimality rank 2.71 (0.50),
+  3.06 (0.60), 3.53 (0.70), 3.62 (0.80), 3.99 (0.85), 4.09 (0.90); 0.50
+  holds/ties the best mean on 54/136 instances (0.90: 24) and has the lowest
+  library mean gap (9.27% vs 9.81–10.19% for the rest). Family × rate: 0.50
+  is best or tied on every hard/grind family — sko, tai, wil, tho, chr, ste,
+  kra, esc — while high rates win only small structured families (els, scr,
+  rou) and the extra exact hits above. Per the tuning guidance in CLAUDE.md
+  (tune on tai-a-like and grind families, not on structured/lipa), **0.50 is
+  the going-forward crossover rate** for the coming parameter studies
+  (mutation, population size, …), with two caveats: 0.50 is the edge of the
+  tested grid (probe 0.30–0.40 when revisiting), and `Main`'s default stays
+  0.9 until the new baseline is ratified.
 - Delta (swap) evaluation utility — the general two-orientation formula for
   the 37 asymmetric instances — prerequisite for real `LocalImprovement`
   implementations (2-swap descent, SA).
