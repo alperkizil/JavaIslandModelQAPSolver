@@ -39,6 +39,15 @@ remains deferred and should land with the next concrete steps.
 - **JDK 11+** (`javac --release 11` enforced), no build tool, no dependencies.
 - Production code under `src/main/`, test harnesses under `src/test/`
   (plain main-class runners, exit code 0 = PASS, 1 = failure).
+- **NetBeans opens the repo directly** as an Ant-based Java SE project:
+  committed metadata is `nbproject/project.xml` + `project.properties`
+  (src.dir/test.src.dir mapped to `src/main`/`src/test`, source/target 11,
+  main class `qapSolver.Main`, encoding UTF-8) plus the thin `build.xml` and
+  `manifest.mf`. NetBeans regenerates `nbproject/build-impl.xml` and
+  `genfiles.properties` from project.xml on first open — both gitignored
+  along with `nbproject/private/`, `build/`, `dist/`. F6 runs the smoke
+  runner with working dir = project root, so `QAPData/` resolves. The
+  command-line javac build below stays canonical.
 - Packages are capitalized by project convention: `qapSolver.Model`,
   `qapSolver.Reader`, `qapSolver.Objective`.
 
