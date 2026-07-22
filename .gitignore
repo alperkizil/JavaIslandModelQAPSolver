@@ -4,3 +4,10 @@ __pycache__/
 DS_10283_4390.zip
 .claude/settings.local.json
 out/
+
+# NetBeans-generated (recreated from nbproject/project.xml on first open)
+build/
+dist/
+nbproject/private/
+nbproject/build-impl.xml
+nbproject/genfiles.properties
