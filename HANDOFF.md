@@ -17,7 +17,9 @@ concrete operators are landing, all harness-tested:
 `qapSolver.GA.Selection` package (step (c): tournament, roulette wheel, SUS,
 sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
 PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
-multi-swap), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
+multi-swap), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
+`qapSolver.Engine.Evaluation` package (step (b): exact baseline evaluator;
+caching decorator and master–slave parallel evaluator to follow).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -40,6 +42,7 @@ java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
+java -cp out/main:out/test qapSolver.Engine.Evaluation.ExactEvaluatorTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
@@ -104,6 +107,21 @@ working directory (repo root); both can be overridden via args.
 | `FitnessEvaluator` *(abstract)* | Bulk `List<Candidate>` → `List<EvaluatedCandidate>`. Contract: ownership transfer, input-order results (what keeps parallel evaluation replay-identical), exact values, one `countFullEvaluation()` per actual O(n²) computation (cache hits uncounted). The seam for the future caching decorator and master–slave evaluator. |
 | `TerminationCriterion` *(abstract)* | Read-only stop check between generations; must not consume randomness (would shift the stream and break replay). Never re-checks the external stop flag — the engine loop owns that. |
 | `EvolutionObserver` *(abstract)* | Read-only no-op hooks: `onRunStart`, `onGenerationComplete(ctx, pop)` (generation 0 included), `onNewBest` (strict improvements only), `onRunEnd` (fired by `run()`; external drivers own it). Engine-thread only. |
+
+### `qapSolver.Engine.Evaluation` — fitness evaluators
+
+Concrete `FitnessEvaluator`s live at engine level (not under `qapSolver.GA`)
+because every future engine (SA, island variants) evaluates the same way.
+Pattern decision: caching is a *decorator* over any evaluator; parallelism is
+a *leaf* implementation, never a wrapper — a parallel decorator would have to
+hand the thread-confined `AlgorithmContext` (unsynchronized counters) to
+workers, breaking the confinement that keeps runs replay-identical. Stacking
+order is therefore fixed: cache outermost, e.g.
+`CachingEvaluator(MultithreadedExactEvaluator)`.
+
+| Class | Responsibility |
+|---|---|
+| `ExactEvaluator` | The baseline: sequential full O(n²) `ObjectiveFunction` evaluation per candidate on the engine thread, one `countFullEvaluation()` tick each, arrays moved zero-copy into the results, input order, no randomness. The reference every decorated/parallel stack must reproduce value-for-value. |
 
 ### `qapSolver.GA` — the genetic algorithm
 
@@ -201,6 +219,13 @@ use `Permutations.inverseOf`.
   range + uniformity; shuffle multiset/bijection/determinism/6-ordering
   uniformity; 8 threads racing a shared `RandomSource` reproduce the
   sequential sequences exactly. No dataset dependency.
+- `ExactEvaluatorTest` — hand-computed n=2 anchor (identity 70, transposition
+  60 by pencil-and-paper); bulk contract on random batches at n=3/10/30
+  (values vs direct `ObjectiveFunction` calls, input order, zero-copy array
+  identity per slot); evaluation counting across repeated batches (5 then
+  5+3); empty-batch and n=1 edges; no randomness consumed (stream-position
+  agreement); timer (invocations = batches). Synthetic instances only — no
+  dataset dependency.
 - `RandomInitializerTest` — constructor validation (μ < 1 throws); batch shape
   (size μ, valid 0-based permutations, per-candidate owned arrays, no content
   duplicates at n=20/μ=30); bit-exact stream replay from an independently
@@ -344,6 +369,18 @@ use `Permutations.inverseOf`.
   `int[]` mapping tables on the breeding path. The repair chains need no
   cycle guard: each table is injective and a chain starts at a value outside
   the table's image, so termination is structural, not defensive.
+- **Evaluators: caching decorates, parallelism is a leaf** — the two planned
+  evaluator features compose by different patterns, forced by thread
+  confinement. Caching wraps any inner evaluator (same abstract type, engine
+  thread only). A "parallel decorator" is impossible under the contract:
+  inner evaluators call `context.countFullEvaluation()`, and the context's
+  counters are deliberately unsynchronized/thread-confined — so the
+  master–slave evaluator is a concrete leaf whose workers compute pure costs
+  from the immutable instance, while the engine thread reassembles
+  input-order results and does all counting. Cache goes outermost so its map
+  never needs locks. Composite was considered and rejected for evaluators
+  (nothing to merge — one exact fitness per candidate from one authority);
+  it remains the right shape for termination-criterion and/or combinators.
 - **Mutation as SA reheating, strengths as fractions of n** — the escape
   mechanism is temperature-shaped (reheat on stagnation only after full
   cool-down, then geometric cooling) rather than a monotone stagnation ramp,
@@ -372,9 +409,11 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
+- Remaining evaluators of the designed trio: `CachingEvaluator` (decorator,
+  bounded LRU, hit/miss counters), `MultithreadedExactEvaluator` (master–
+  slave leaf).
 - Remaining concrete steps, each its own step-by-step piece:
-  exact evaluator over `ObjectiveFunction`, generational replacement,
-  NoOp improvement, and termination criteria
+  generational replacement, NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
   with and/or combinators) — then an end-to-end smoke run on a small closed
   instance.
