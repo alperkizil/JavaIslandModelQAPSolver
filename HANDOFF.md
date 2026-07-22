@@ -15,7 +15,16 @@ place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
 concrete operators are landing, all harness-tested:
 `qapSolver.GA.Initialization.RandomInitializer` (step (a)), the
 `qapSolver.GA.Selection` package (step (c): tournament, roulette wheel, SUS,
-sigma scaling), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
+sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
+PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
+multi-swap), the `qapSolver.GA.Replacement` package (step (f): generational
++ steady-state), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)),
+`qapSolver.GA.Improvement.NoOpImprovement` (step (h): the Null Object —
+pure-GA baseline), and the
+`qapSolver.Engine.Evaluation` package (step (b), complete trio: exact
+baseline, caching LRU decorator, master–slave parallel evaluator), and the
+`qapSolver.Engine.Termination` package (step (i): max-generations,
+evaluation-budget, time-limit, stagnation).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -38,12 +47,24 @@ java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
+java -cp out/main:out/test qapSolver.Engine.Evaluation.ExactEvaluatorTest
+java -cp out/main:out/test qapSolver.Engine.Evaluation.CachingEvaluatorTest
+java -cp out/main:out/test qapSolver.Engine.Evaluation.MultithreadedExactEvaluatorTest
+java -cp out/main:out/test qapSolver.Engine.Termination.MaxGenerationsCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Termination.EvaluationBudgetCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Termination.TimeLimitCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Termination.StagnationCriterionTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.StochasticUniversalSamplingSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.SigmaScalingSelectorTest
+java -cp out/main:out/test qapSolver.GA.Crossover.PartiallyMappedCrossoverTest
+java -cp out/main:out/test qapSolver.GA.Mutation.ReheatingSwapMutationTest
+java -cp out/main:out/test qapSolver.GA.Replacement.GenerationalReplacementTest
+java -cp out/main:out/test qapSolver.GA.Replacement.SteadyStateReplacementTest
 java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
+java -cp out/main:out/test qapSolver.GA.Improvement.NoOpImprovementTest
 ```
 
 Test harnesses default to `QAPData/qapdata` / `QAPData/qapsoln` relative to the
@@ -101,6 +122,38 @@ working directory (repo root); both can be overridden via args.
 | `TerminationCriterion` *(abstract)* | Read-only stop check between generations; must not consume randomness (would shift the stream and break replay). Never re-checks the external stop flag — the engine loop owns that. |
 | `EvolutionObserver` *(abstract)* | Read-only no-op hooks: `onRunStart`, `onGenerationComplete(ctx, pop)` (generation 0 included), `onNewBest` (strict improvements only), `onRunEnd` (fired by `run()`; external drivers own it). Engine-thread only. |
 
+### `qapSolver.Engine.Evaluation` — fitness evaluators
+
+Concrete `FitnessEvaluator`s live at engine level (not under `qapSolver.GA`)
+because every future engine (SA, island variants) evaluates the same way.
+Pattern decision: caching is a *decorator* over any evaluator; parallelism is
+a *leaf* implementation, never a wrapper — a parallel decorator would have to
+hand the thread-confined `AlgorithmContext` (unsynchronized counters) to
+workers, breaking the confinement that keeps runs replay-identical. Stacking
+order is therefore fixed: cache outermost, e.g.
+`CachingEvaluator(MultithreadedExactEvaluator)`.
+
+| Class | Responsibility |
+|---|---|
+| `ExactEvaluator` | The baseline: sequential full O(n²) `ObjectiveFunction` evaluation per candidate on the engine thread, one `countFullEvaluation()` tick each, arrays moved zero-copy into the results, input order, no randomness. The reference every decorated/parallel stack must reproduce value-for-value. |
+| `CachingEvaluator` | Decorator over any evaluator: per batch, cache hits answered directly, same-batch repeats answered by their first occurrence, only genuinely new permutations delegated (all-hit batches never invoke the inner evaluator). Ownership holds on every path (hits/repeats consume their own candidate's array zero-copy). Never counts evaluations itself — only the inner evaluator computes. Bounded LRU (capacity constructor param; hits refresh recency); keys are defensive copies, lookups transient no-copy keys. `getHits`/`getMisses`/`getCachedCount` are the per-family measurement that decides whether the decorator earns its place. Engine-thread only ⇒ always the outermost layer. |
+| `MultithreadedExactEvaluator` | Master–slave leaf: batch partitioned into contiguous chunks over a fixed pool of named daemon workers (`workerCount` constructor param); workers compute pure `long` costs via the static `ObjectiveFunction` on the immutable instance and never see the context; the engine thread reassembles input-order results and does all counting and array moves. Replay-identical to sequential regardless of scheduling (exact costs, index order, zero randomness); memory safety via the executor's happens-before edges. Worker `RuntimeException`s rethrown as-is on the engine thread, evaluator stays usable; `shutdown()` idempotent, evaluate-after-shutdown throws. For single-island runs on large instances — island parallelism takes budget precedence. |
+
+### `qapSolver.Engine.Termination` — termination criteria
+
+Concrete `TerminationCriterion`s, engine-level like Evaluation. All are
+read-only context checks (no randomness, counters untouched) evaluated
+between generations — budget-style limits are therefore stopping *floors*:
+the generation in flight completes, overshoot ≤ one generation. Target-value
+and and/or combinators (Composite) are the planned future additions.
+
+| Class | Responsibility |
+|---|---|
+| `MaxGenerationsCriterion` | Stop at `generation ≥ limit`; as the binding criterion a run evolves exactly `limit` generations beyond initialization (generation 0). The comparable-benchmark workhorse. |
+| `EvaluationBudgetCriterion` | Stop at `fullEvaluations ≥ budget` (long). Machine-independent effort metric; cache hits never count (evaluator contract); generation-0 evaluation is on the budget. Full evaluations only — delta budgeting arrives with local search. |
+| `TimeLimitCriterion` | Stop at `elapsedMillis ≥ limit`, clock from `context.start()` (generation-0 work included). The deliberately machine-dependent one — not for comparable experiments. Unstarted context fails loudly (ISE from the clock). |
+| `StagnationCriterion` | Stop at `generationsSinceImprovement ≥ X` (strict improvements only — ties never reset; no incumbent ⇒ false). Knob pairing: races the reheating mutation — set X well above the mutation's threshold + cool-down, ideally several reheat cycles, or the run gives up before the escape mechanism acts. |
+
 ### `qapSolver.GA` — the genetic algorithm
 
 | Class | Responsibility |
@@ -134,11 +187,36 @@ live in per-role subpackages.
 | `StochasticUniversalSamplingSelector` | One start double + count evenly spaced pointers over the same rank table: every member's copy count is its expectation floored or ceiled (minimal sampling variance). Result is Fisher–Yates-shuffled (count−1 ints) so the rank-ordered walk doesn't self-pair under the engine's consecutive pairing. |
 | `SigmaScalingSelector` | Standalone Watchmaker-style sigma scaling, roulette-sampled: per generation w = 1 + (mean−f)/2σ (minimization form), floored at 0.1 when ≤ 0, σ = 0 ⇒ uniform. Parameterless — pressure adapts to population statistics; the one proportional scheme that stays meaningful on QAP's compressed relative spreads. |
 
+### `qapSolver.GA.Crossover` — crossover strategies
+
+| Class | Responsibility |
+|---|---|
+| `PartiallyMappedCrossover` | PMX in the Watchmaker `ListOrderCrossover` shape: two uniform cut draws as an *ordered* pair ⇒ the exchanged segment may wrap around the array end, length uniform on 0..n−1; equal draws (probability 1/n) ⇒ empty segment ⇒ children are parent clones (kept as in the reference — deliberate clone-through stays the engine's rate path). Segment positions swap between the parents; outside positions keep the own parent's value, conflicts resolved by following the segment's value→value tables (value-indexed `int[]`, not boxed maps). Chains terminate structurally: each table is injective and a chain starts outside its image — no visited-set needed. Two children per call, exactly two `nextInt(n)` draws, O(n) total, parents read-only. |
+
+### `qapSolver.GA.Mutation` — mutation strategies
+
+| Class | Responsibility |
+|---|---|
+| `ReheatingSwapMutation` | Multi-swap mutation with an SA-style reheating schedule — the designated escape mechanism from local optima. Temperature in swaps-per-child: baseline `max(1, round(baselineFraction·n))`; when fully cooled *and* `generationsSinceImprovement ≥ stagnationThreshold`, reheats to `max(2, round(hotFraction·n))` and cools geometrically (`T ← max(baseline, T·coolingFactor)` per generation). Both tiers scale with n (basin size ∝ n per the measured ~0.25·n autocorrelation length; 0.25 is the data-backed `hotFraction` default). Persistent stagnation ⇒ periodic kick cycles; improvement resets the stagnation clock but never quenches a hot phase (elitism + incumbent make hot generations safe). Per-generation island state updated lazily on the first `mutate` of each generation; all same-generation children get the same k; per child exactly 2k draws (`nextInt(n)`, `nextInt(n−1)`+shift ⇒ k distinct-position transpositions — the random-walk model the correlation lengths were measured with). n=1 ⇒ identity, zero draws. `getCurrentSwaps()` exposed for observability. All constants constructor-injected starting points, to be benchmarked. |
+
+### `qapSolver.GA.Replacement` — survivor selection strategies
+
+| Class | Responsibility |
+|---|---|
+| `GenerationalReplacement` | Full turnover: offspring are the next generation, every parent dies; fresh `Population`, input untouched. Requires λ = μ, loud `IllegalStateException` otherwise (config error, not papered over; (μ,λ)/(μ+λ) truncation are future siblings). No survivor pressure by design — breeding is selection's decision, survival of the old best is the bracket's. Deterministic, no randomness. |
+| `SteadyStateReplacement` | GENITOR-style replace-worst, in place: each child in input order replaces the *current* worst member — the batch is a sequence of λ birth events, so later children may evict earlier ones; λ = 1–2 with large μ through the engine = the classic steady-state GA. Acceptance is *unconditional* (worse-than-everyone still enters): if-better acceptance would double-dip on selection pressure and re-implement the bracket's protection; unconditional turnover keeps λ genotypes/generation flowing — what keeps plateau families moving sideways. Worst ties first-index; deterministic, O(λ·μ), no randomness. |
+
 ### `qapSolver.GA.Elitism` — elite preservation strategies
 
 | Class | Responsibility |
 |---|---|
 | `BestKElitePreserver` | Best-k elitism. Extract: references to the k lowest-fitness members, best first, (fitness, first-index) tie-break; k = 0 ⇒ elitism off (no separate NoOp class); k ≥ μ throws at extract. Reinsert per elite: presence judged by permutation content (`samePermutationAs`, never fitness); missing ⇒ overwrite the worst among unprotected slots — found/reinserted slots stay protected for the rest of the call (all-tied populations would otherwise evict elite #1 for elite #2), and duplicate-genotype elites collapse to one survivor. Deterministic, consumes no randomness. |
+
+### `qapSolver.GA.Improvement` — local improvement strategies
+
+| Class | Responsibility |
+|---|---|
+| `NoOpImprovement` | Local improvement switched off — the Null Object of slot (h): returns the input batch as-is (same list, same references, zero work, nothing counted, no randomness). Composing it makes the engine a plain non-memetic GA — the baseline real improvers (2-swap descent, SA — blocked on the delta utility) are measured against. |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -185,6 +263,48 @@ use `Permutations.inverseOf`.
   range + uniformity; shuffle multiset/bijection/determinism/6-ordering
   uniformity; 8 threads racing a shared `RandomSource` reproduce the
   sequential sequences exactly. No dataset dependency.
+- `ExactEvaluatorTest` — hand-computed n=2 anchor (identity 70, transposition
+  60 by pencil-and-paper); bulk contract on random batches at n=3/10/30
+  (values vs direct `ObjectiveFunction` calls, input order, zero-copy array
+  identity per slot); evaluation counting across repeated batches (5 then
+  5+3); empty-batch and n=1 edges; no randomness consumed (stream-position
+  agreement); timer (invocations = batches). Synthetic instances only — no
+  dataset dependency.
+- `CachingEvaluatorTest` — constructor validation (null inner, capacity < 1);
+  miss path (exact values, order, zero-copy ownership, delegation observed
+  via a recording inner evaluator); hit path (same content as fresh arrays:
+  zero inner invocations, zero new evaluation counts, results own the new
+  arrays); mixed batches (inner sees exactly the misses in input order);
+  same-batch repeats (2 unique of 4 candidates ⇒ 2 evaluations, every slot
+  owns its own array, one cache entry per content); LRU both ways (oldest
+  evicted at capacity; hit-refreshed recency flips the victim); equivalence
+  sweep vs undecorated ExactEvaluator on overlapping batches (identical
+  fitnesses, 6 vs 11 evaluations); no randomness consumed; timer (decorator
+  counts every call, inner only delegated ones). Synthetic instances only —
+  no dataset dependency.
+- `MultithreadedExactEvaluatorTest` — constructor validation; equivalence
+  with sequential `ExactEvaluator` across workers {1,3,8} × batch sizes
+  {0,1,2,7,8,25} (slot-exact fitness, zero-copy identity, counting) plus a
+  100×n=40 stress batch on 4 workers; the sanctioned stack
+  `CachingEvaluator(MultithreadedExactEvaluator)` (repeat batch: 1 new
+  evaluation, cached values identical through the stack, counters); no
+  randomness consumed; worker-exception propagation (wrong-length
+  permutation surfaces as the objective's IAE, evaluator usable after);
+  shutdown idempotence and evaluate-after-shutdown throwing; timer.
+  Synthetic instances only — no dataset dependency.
+- `MaxGenerationsCriterionTest` — constructor validation; exact stop
+  boundary (false through limit−1, true at/beyond the limit); read-only
+  (counters and stream untouched); timer.
+- `EvaluationBudgetCriterionTest` — constructor validation (long budgets
+  beyond int range legal); exact boundary at the counted budget; read-only;
+  timer.
+- `TimeLimitCriterionTest` — constructor validation; unstarted context fails
+  loudly (ISE); generous limit doesn't stop a fresh run, 1 ms limit stops
+  after a bounded 2 ms busy-wait; read-only; timer.
+- `StagnationCriterionTest` — constructor validation; no incumbent ⇒ never
+  stops; exact boundary at X stagnant generations; strict improvement resets
+  the clock (stop exactly X after it); a value tie does NOT reset; read-only;
+  timer.
 - `RandomInitializerTest` — constructor validation (μ < 1 throws); batch shape
   (size μ, valid 0-based permutations, per-candidate owned arrays, no content
   duplicates at n=20/μ=30); bit-exact stream replay from an independently
@@ -213,6 +333,41 @@ use `Permutations.inverseOf`.
   extinct); compressed-spread pressure (0.9% spread → ~8× best/worst where a
   raw wheel would flatten); μ = 1 edge; determinism; timer. Synthetic members
   only.
+- `PartiallyMappedCrossoverTest` — recombination contract (exactly two
+  children, fresh owned arrays — never a parent's or each other's, parents
+  byte-unchanged, valid permutations); bit-exact replay against an
+  independent boxed transliteration of the Watchmaker reference algorithm
+  (3 seeds × 5 sizes incl. n=2 and n=60, wrap cases included) with final
+  stream-position agreement (exactly two draws); structural semantics via
+  mirrored cut-point draws (segment carries the other parent's values,
+  conflict-free outside positions keep the own parent's, 50 seeds at n=15);
+  empty-segment clone case (n=5 seed sweep, ≥20 degenerate draws verified
+  clone-exact); chain-repair stress on rotation and reversal parents (maximal
+  mapping chains, n=30); same-seed determinism vs cross-seed difference;
+  n=1 edge; timer (invocations = pairs). Synthetic parents only — no dataset
+  dependency.
+- `ReheatingSwapMutationTest` — constructor validation (fractions ∉ (0,1],
+  hot < baseline, α ∉ (0,1), S < 1, NaN-proof); mutation contract (in-place
+  on the same array, permutation validity, baseline at n=20 ⇒ exactly one
+  transposition ⇒ exactly 2 changed positions); bit-exact replay of the
+  2k-draw swap sequence over two same-generation children with stream-position
+  agreement; n-scaling of both tiers (n=20 vs n=100: baseline 1 vs 2, hot 5
+  vs 25); full reheat cycle against a hard-coded temperature trace
+  ({1,1,1,25,13,6,3,2,1,25} for α=0.5, S=3 — reheat at threshold, geometric
+  cooling, re-reheat under persistent stagnation); improvement resets the
+  stagnation clock (no reheat at the would-be generation) but does not quench
+  an in-progress cooling phase; n=1 identity with zero draws consumed;
+  same-seed determinism vs cross-seed difference; timer (invocations =
+  children). Synthetic instances only — no dataset dependency.
+- `GenerationalReplacementTest` — full turnover at λ = μ (fresh Population,
+  offspring references slot-for-slot in input order, input object and members
+  untouched); λ ≠ μ throws both directions; no randomness; timer.
+- `SteadyStateReplacementTest` — in-place replace-worst (same object back,
+  only the worst slot swapped); unconditional acceptance (worse-than-everyone
+  child still evicts); sequential birth semantics (later children evict
+  earlier ones; insertion order changes the survivor); first-index worst-tie
+  break; λ > μ churn against a hand-traced state; μ preserved; no randomness;
+  timer.
 - `BestKElitePreserverTest` — constructor validation (k < 0 throws, 0/1 legal);
   extract pick and best-first order with first-index tie-break, reference
   snapshots, read-only population, k = 0 empty, k ≥ μ throws (k = μ−1 legal);
@@ -223,6 +378,9 @@ use `Permutations.inverseOf`.
   survivor, no second slot burned); no-slot-left guard throws; both phases on
   one timer (two invocations per generation). Synthetic members with
   fabricated fitnesses — no dataset dependency.
+- `NoOpImprovementTest` — pure identity (same list object, member references
+  and order untouched); empty batch; context untouched (no counts, no
+  randomness, no incumbent); timer.
 - Engine/GA skeleton: **compile-verified only** for now — its dedicated
   harness was deliberately deferred and should land with the first concrete
   steps (context bookkeeping, candidate/population invariants, lifecycle
@@ -294,6 +452,53 @@ use `Permutations.inverseOf`.
   deliberately standalone in Watchmaker shape rather than a weighting×sampler
   matrix). SUS shuffles its rank-ordered picks so the engine's consecutive
   pairing doesn't self-pair.
+- **PMX in the reference's shape, primitive inside** — the port keeps
+  Watchmaker's observable semantics (ordered wraparound cut points, segment
+  length uniform on 0..n−1, empty segment ⇒ parent clones) so the harness can
+  pin the operator bit-exactly to an independent transliteration of the
+  reference; the boxed List/HashMap machinery is replaced by value-indexed
+  `int[]` mapping tables on the breeding path. The repair chains need no
+  cycle guard: each table is injective and a chain starts at a value outside
+  the table's image, so termination is structural, not defensive.
+- **Steady-state accepts unconditionally** — replace-worst takes every child,
+  even one worse than the whole pool. Acceptance-if-better was rejected
+  because each pressure source stays single-owned: parent selection owns
+  selective pressure, the elitism bracket owns protection of the best, and
+  replacement owns turnover only. The batch is processed as λ sequential
+  birth events (later children can evict earlier ones), which makes the
+  generational engine reproduce a classic steady-state GA exactly at
+  λ = 1–2.
+- **Termination checked between generations ⇒ budgets are floors** — the
+  engine consults criteria only at generation boundaries, so evaluation and
+  time limits overshoot by at most one generation; that is accepted rather
+  than adding mid-generation abort paths. The stagnation criterion is
+  documented as racing the reheating mutation: its X must exceed the
+  mutation's stagnation threshold plus cool-down (ideally several reheat
+  cycles), or runs give up before the escape mechanism has acted.
+- **Evaluators: caching decorates, parallelism is a leaf** — the two planned
+  evaluator features compose by different patterns, forced by thread
+  confinement. Caching wraps any inner evaluator (same abstract type, engine
+  thread only). A "parallel decorator" is impossible under the contract:
+  inner evaluators call `context.countFullEvaluation()`, and the context's
+  counters are deliberately unsynchronized/thread-confined — so the
+  master–slave evaluator is a concrete leaf whose workers compute pure costs
+  from the immutable instance, while the engine thread reassembles
+  input-order results and does all counting. Cache goes outermost so its map
+  never needs locks. Composite was considered and rejected for evaluators
+  (nothing to merge — one exact fitness per candidate from one authority);
+  it remains the right shape for termination-criterion and/or combinators.
+- **Mutation as SA reheating, strengths as fractions of n** — the escape
+  mechanism is temperature-shaped (reheat on stagnation only after full
+  cool-down, then geometric cooling) rather than a monotone stagnation ramp,
+  so kicks are episodic and self-limiting; persistent stagnation yields
+  periodic cycles instead of a permanently hot island. Improvements reset
+  the stagnation clock but deliberately do not quench cooling — elitism and
+  the incumbent copy make hot generations safe. Both strength tiers scale
+  with n because the measured autocorrelation length is ~0.25·n across all
+  families (basin size grows with n): absolute swap counts would under-kick
+  large instances. Defaults are starting points for benchmarking, all
+  constructor-injected; per-island hot/cold variants come free via
+  construction.
 - **Concrete operators in per-role subpackages** — `qapSolver.GA` keeps the
   framework (abstract steps + the composed engine); implementations group by
   role (`qapSolver.GA.Initialization` first, more as steps get concrete), so
@@ -310,13 +515,11 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- Remaining concrete steps, each its own step-by-step piece:
-  exact evaluator over `ObjectiveFunction`, a
-  position-preserving crossover, swap mutation, generational replacement,
-  NoOp improvement, and termination criteria
-  (max-generations / eval-budget / wall-clock / target-value / stagnation
-  with and/or combinators) — then an end-to-end smoke run on a small closed
-  instance.
+- **Every GA slot now has at least one concrete implementation** — next: the
+  end-to-end smoke run on a small closed instance (which doubles as the
+  deferred engine-composition test).
+  Termination extras (target-value criterion, and/or Composite combinators)
+  as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
   the 37 asymmetric instances — prerequisite for real `LocalImprovement`
   implementations (2-swap descent, SA).
