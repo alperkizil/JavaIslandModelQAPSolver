@@ -18,7 +18,9 @@ concrete operators are landing, all harness-tested:
 sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
 PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
 multi-swap), the `qapSolver.GA.Replacement` package (step (f): generational
-+ steady-state), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
++ steady-state), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)),
+`qapSolver.GA.Improvement.NoOpImprovement` (step (h): the Null Object —
+pure-GA baseline), and the
 `qapSolver.Engine.Evaluation` package (step (b), complete trio: exact
 baseline, caching LRU decorator, master–slave parallel evaluator), and the
 `qapSolver.Engine.Termination` package (step (i): max-generations,
@@ -62,6 +64,7 @@ java -cp out/main:out/test qapSolver.GA.Mutation.ReheatingSwapMutationTest
 java -cp out/main:out/test qapSolver.GA.Replacement.GenerationalReplacementTest
 java -cp out/main:out/test qapSolver.GA.Replacement.SteadyStateReplacementTest
 java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
+java -cp out/main:out/test qapSolver.GA.Improvement.NoOpImprovementTest
 ```
 
 Test harnesses default to `QAPData/qapdata` / `QAPData/qapsoln` relative to the
@@ -208,6 +211,12 @@ live in per-role subpackages.
 | Class | Responsibility |
 |---|---|
 | `BestKElitePreserver` | Best-k elitism. Extract: references to the k lowest-fitness members, best first, (fitness, first-index) tie-break; k = 0 ⇒ elitism off (no separate NoOp class); k ≥ μ throws at extract. Reinsert per elite: presence judged by permutation content (`samePermutationAs`, never fitness); missing ⇒ overwrite the worst among unprotected slots — found/reinserted slots stay protected for the rest of the call (all-tied populations would otherwise evict elite #1 for elite #2), and duplicate-genotype elites collapse to one survivor. Deterministic, consumes no randomness. |
+
+### `qapSolver.GA.Improvement` — local improvement strategies
+
+| Class | Responsibility |
+|---|---|
+| `NoOpImprovement` | Local improvement switched off — the Null Object of slot (h): returns the input batch as-is (same list, same references, zero work, nothing counted, no randomness). Composing it makes the engine a plain non-memetic GA — the baseline real improvers (2-swap descent, SA — blocked on the delta utility) are measured against. |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -369,6 +378,9 @@ use `Permutations.inverseOf`.
   survivor, no second slot burned); no-slot-left guard throws; both phases on
   one timer (two invocations per generation). Synthetic members with
   fabricated fitnesses — no dataset dependency.
+- `NoOpImprovementTest` — pure identity (same list object, member references
+  and order untouched); empty batch; context untouched (no counts, no
+  randomness, no incumbent); timer.
 - Engine/GA skeleton: **compile-verified only** for now — its dedicated
   harness was deliberately deferred and should land with the first concrete
   steps (context bookkeeping, candidate/population invariants, lifecycle
@@ -503,8 +515,9 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- Remaining concrete step: NoOp improvement (h) — then an end-to-end smoke
-  run on a small closed instance.
+- **Every GA slot now has at least one concrete implementation** — next: the
+  end-to-end smoke run on a small closed instance (which doubles as the
+  deferred engine-composition test).
   Termination extras (target-value criterion, and/or Composite combinators)
   as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
