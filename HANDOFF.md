@@ -28,9 +28,11 @@ evaluation-budget, time-limit, stagnation). Run observability landed with
 `qapSolver.Engine.Observation.LoggingObserver` (verbose mode as an observer,
 never an engine flag) over the shared `qapSolver.Engine.PopulationStatistics`
 utility.
-The skeleton itself is still
-compile-verified only; its dedicated test harness remains deferred and should
-land with the next concrete steps.
+The first end-to-end run of the composed cycle
+landed as `qapSolver.Main` — the GA smoke runner over small closed instances
+(curated 8 × seeds 1–5: 40/40 results auto-verified valid, 13/40 matched the
+proven optimum, ~3 s total). The engine/GA skeleton's dedicated unit harness
+remains deferred and should land with the next concrete steps.
 
 ## Layout & toolchain
 
@@ -45,6 +47,7 @@ Build & run everything:
 ```
 javac --release 11 -d out/main $(find src/main -name '*.java')
 javac --release 11 -cp out/main -d out/test $(find src/test -name '*.java')
+java -cp out/main qapSolver.Main    # GA smoke run; [-v] [-data <dir>] [-soln <dir>] [instance ...]
 java -cp out/main:out/test qapSolver.Reader.InstanceReaderTest
 java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
@@ -234,6 +237,12 @@ live in per-role subpackages.
 | Class | Responsibility |
 |---|---|
 | `NoOpImprovement` | Local improvement switched off — the Null Object of slot (h): returns the input batch as-is (same list, same references, zero work, nothing counted, no randomness). Composing it makes the engine a plain non-memetic GA — the baseline real improvers (2-swap descent, SA — blocked on the delta utility) are measured against. |
+
+### `qapSolver.Main` — GA smoke-test entry point
+
+| Class | Responsibility |
+|---|---|
+| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: curated 8 defaults (nug12, had12, rou12, scr12, chr12a, tai12a, esc16a, lipa20a — one per family character, all closed, all with `.sln`), seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, caching(exact) capacity 100 000, 500 generations. CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run line shows best/gap/found-at/evaluations/cache-rate/time with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -552,9 +561,15 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- **Every GA slot now has at least one concrete implementation** — next: the
-  end-to-end smoke run on a small closed instance (which doubles as the
-  deferred engine-composition test).
+- ~~End-to-end smoke run~~ — done (`qapSolver.Main`, July 2026). First
+  results, pure-GA baseline at 500 generations: optimum reached on 6/8
+  instances at least once (esc16a 5/5, scr12 4/5); nug12/had12 close but
+  never exact; chr12a hardest (mean gap 8.6% — the structured family that
+  needs local search). Cache hit rate only 0.2–2.1% at μ=100 / PMX 0.9 —
+  first measured evidence the `CachingEvaluator` does **not** earn its place
+  in this configuration; re-measure when duplicates rise (dedup work, island
+  convergence). Late improvements at generation 400+ on several runs show
+  the reheating mutation escaping local optima as designed.
   Termination extras (target-value criterion, and/or Composite combinators)
   as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
