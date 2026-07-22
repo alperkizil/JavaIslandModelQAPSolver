@@ -24,7 +24,10 @@ pure-GA baseline), and the
 `qapSolver.Engine.Evaluation` package (step (b), complete trio: exact
 baseline, caching LRU decorator, master–slave parallel evaluator), and the
 `qapSolver.Engine.Termination` package (step (i): max-generations,
-evaluation-budget, time-limit, stagnation).
+evaluation-budget, time-limit, stagnation). Run observability landed with
+`qapSolver.Engine.Observation.LoggingObserver` (verbose mode as an observer,
+never an engine flag) over the shared `qapSolver.Engine.PopulationStatistics`
+utility.
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -47,6 +50,7 @@ java -cp out/main:out/test qapSolver.Reader.InstanceRepositoryTest
 java -cp out/main:out/test qapSolver.Reader.QAPDatasetTest
 java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
+java -cp out/main:out/test qapSolver.Engine.PopulationStatisticsTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.ExactEvaluatorTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.CachingEvaluatorTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.MultithreadedExactEvaluatorTest
@@ -54,6 +58,7 @@ java -cp out/main:out/test qapSolver.Engine.Termination.MaxGenerationsCriterionT
 java -cp out/main:out/test qapSolver.Engine.Termination.EvaluationBudgetCriterionTest
 java -cp out/main:out/test qapSolver.Engine.Termination.TimeLimitCriterionTest
 java -cp out/main:out/test qapSolver.Engine.Termination.StagnationCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Observation.LoggingObserverTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
@@ -118,6 +123,7 @@ working directory (repo root); both can be overridden via args.
 | `Candidate` | Mutable unevaluated permutation — the breeding scratch. Owns its array, hot-path trust (null check only). Single-owner hand-off: creator → mutation → evaluator, which consumes it. |
 | `EvaluatedCandidate` | Immutable permutation + exact `long` fitness. The evaluator moves a Candidate's array in (zero-copy evaluation path); `toCandidate()` copies back to mutable land; `samePermutationAs`/`permutationHash` for dedup by permutation content (never fitness equality — tie-heavy families). `equals`/`hashCode` keep identity semantics. |
 | `Population` | Mutable pool of immutable members — the type-state boundary (anything inside is evaluated; the unevaluated batch is a plain `List<Candidate>`, never a Population). Enforces non-null members and uniform n. Minimization-native `best()`/`worst()` (+ indices, first-index ties); `set` returns the evicted member. |
+| `PopulationStatistics` | Immutable fitness statistics of one population snapshot (best/worst/mean/population-σ), one Welford pass — stable and overflow-free where naive Σf² exceeds `long` at QAP magnitudes. Shared by logging now; adaptive steps and island monitoring later. Loud on null/empty. |
 | `FitnessEvaluator` *(abstract)* | Bulk `List<Candidate>` → `List<EvaluatedCandidate>`. Contract: ownership transfer, input-order results (what keeps parallel evaluation replay-identical), exact values, one `countFullEvaluation()` per actual O(n²) computation (cache hits uncounted). The seam for the future caching decorator and master–slave evaluator. |
 | `TerminationCriterion` *(abstract)* | Read-only stop check between generations; must not consume randomness (would shift the stream and break replay). Never re-checks the external stop flag — the engine loop owns that. |
 | `EvolutionObserver` *(abstract)* | Read-only no-op hooks: `onRunStart`, `onGenerationComplete(ctx, pop)` (generation 0 included), `onNewBest` (strict improvements only), `onRunEnd` (fired by `run()`; external drivers own it). Engine-thread only. |
@@ -153,6 +159,17 @@ and and/or combinators (Composite) are the planned future additions.
 | `EvaluationBudgetCriterion` | Stop at `fullEvaluations ≥ budget` (long). Machine-independent effort metric; cache hits never count (evaluator contract); generation-0 evaluation is on the budget. Full evaluations only — delta budgeting arrives with local search. |
 | `TimeLimitCriterion` | Stop at `elapsedMillis ≥ limit`, clock from `context.start()` (generation-0 work included). The deliberately machine-dependent one — not for comparable experiments. Unstarted context fails loudly (ISE from the clock). |
 | `StagnationCriterion` | Stop at `generationsSinceImprovement ≥ X` (strict improvements only — ties never reset; no incumbent ⇒ false). Knob pairing: races the reheating mutation — set X well above the mutation's threshold + cool-down, ideally several reheat cycles, or the run gives up before the escape mechanism acts. |
+
+### `qapSolver.Engine.Observation` — run observability
+
+Concrete `EvolutionObserver`s. Verbose mode is wiring, not engine state:
+`context.addObserver(new LoggingObserver(...))` switches it on; not
+registering it is "off" (empty dispatch loop, zero cost) — the Null-Object
+philosophy applied to observability.
+
+| Class | Responsibility |
+|---|---|
+| `LoggingObserver` | Three events: new best → highlight stream (defaults to `System.err` — IDEs like NetBeans render stderr red, which is the "red font"; ANSI deliberately avoided) with generation/value/evaluations/millis from the found-at stamps; every generation (0 included) → main stream `gen | best | worst | avg | sd` via `PopulationStatistics`; run end → main stream with final best value, permutation and total wall time `mm:ss` (total minutes, no hour wrap). Locale.ROOT formatting; both streams constructor-injected (testable), no-arg = (`System.out`, `System.err`). |
 
 ### `qapSolver.GA` — the genetic algorithm
 
@@ -263,6 +280,16 @@ use `Permutations.inverseOf`.
   range + uniformity; shuffle multiset/bijection/determinism/6-ordering
   uniformity; 8 threads racing a shared `RandomSource` reproduce the
   sequential sequences exactly. No dataset dependency.
+- `PopulationStatisticsTest` — hand-computed values (best/worst/mean exact,
+  σ = √125 to round-off); single-member and all-tied (σ = 0); order
+  independence; magnitude stability at ~2·10⁹ fitnesses (naive Σf² would
+  overflow long); null throws IAE, empty throws ISE.
+- `LoggingObserverTest` — constructor validation; exact generation lines
+  (gen 0 included, hand-computed stats, main stream only); new-best lines
+  through the context's own dispatch (highlight stream only, found-at
+  stamps, ties silent); exact run-end line (best, permutation, mm:ss total)
+  and the no-incumbent fallback; stream separation; no randomness consumed.
+  Captured injected streams — no console dependency.
 - `ExactEvaluatorTest` — hand-computed n=2 anchor (identity 70, transposition
   60 by pencil-and-paper); bulk contract on random batches at n=3/10/30
   (values vs direct `ObjectiveFunction` calls, input order, zero-copy array
@@ -460,6 +487,16 @@ use `Permutations.inverseOf`.
   `int[]` mapping tables on the breeding path. The repair chains need no
   cycle guard: each table is injective and a chain starts at a value outside
   the table's image, so termination is structural, not defensive.
+- **Verbose mode is an observer; red is stderr** — run logging is a concrete
+  `EvolutionObserver` registered on the context, never an engine flag: "off"
+  is absence (empty dispatch loop), granularity is constructor config, and
+  the engine stays branch-free. The new-best "red font" is a separate
+  highlight stream defaulting to `System.err` — IDE output windows
+  (NetBeans included) render stderr red natively, while ANSI escapes are
+  garbage in stock NetBeans. Statistics live in `PopulationStatistics`
+  (Welford), not in the logger — `SigmaScalingSelector` deliberately keeps
+  its own pinned arithmetic (switching it would shift selection streams;
+  unifying is its own step if ever wanted).
 - **Steady-state accepts unconditionally** — replace-worst takes every child,
   even one worse than the whole pool. Acceptance-if-better was rejected
   because each pressure source stays single-owned: parent selection owns
