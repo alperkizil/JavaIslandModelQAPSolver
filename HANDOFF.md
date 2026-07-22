@@ -17,7 +17,8 @@ concrete operators are landing, all harness-tested:
 `qapSolver.GA.Selection` package (step (c): tournament, roulette wheel, SUS,
 sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
 PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
-multi-swap), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
+multi-swap), the `qapSolver.GA.Replacement` package (step (f): generational
++ steady-state), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
 `qapSolver.Engine.Evaluation` package (step (b), complete trio: exact
 baseline, caching LRU decorator, master–slave parallel evaluator), and the
 `qapSolver.Engine.Termination` package (step (i): max-generations,
@@ -58,6 +59,8 @@ java -cp out/main:out/test qapSolver.GA.Selection.StochasticUniversalSamplingSel
 java -cp out/main:out/test qapSolver.GA.Selection.SigmaScalingSelectorTest
 java -cp out/main:out/test qapSolver.GA.Crossover.PartiallyMappedCrossoverTest
 java -cp out/main:out/test qapSolver.GA.Mutation.ReheatingSwapMutationTest
+java -cp out/main:out/test qapSolver.GA.Replacement.GenerationalReplacementTest
+java -cp out/main:out/test qapSolver.GA.Replacement.SteadyStateReplacementTest
 java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
 ```
 
@@ -192,6 +195,13 @@ live in per-role subpackages.
 | Class | Responsibility |
 |---|---|
 | `ReheatingSwapMutation` | Multi-swap mutation with an SA-style reheating schedule — the designated escape mechanism from local optima. Temperature in swaps-per-child: baseline `max(1, round(baselineFraction·n))`; when fully cooled *and* `generationsSinceImprovement ≥ stagnationThreshold`, reheats to `max(2, round(hotFraction·n))` and cools geometrically (`T ← max(baseline, T·coolingFactor)` per generation). Both tiers scale with n (basin size ∝ n per the measured ~0.25·n autocorrelation length; 0.25 is the data-backed `hotFraction` default). Persistent stagnation ⇒ periodic kick cycles; improvement resets the stagnation clock but never quenches a hot phase (elitism + incumbent make hot generations safe). Per-generation island state updated lazily on the first `mutate` of each generation; all same-generation children get the same k; per child exactly 2k draws (`nextInt(n)`, `nextInt(n−1)`+shift ⇒ k distinct-position transpositions — the random-walk model the correlation lengths were measured with). n=1 ⇒ identity, zero draws. `getCurrentSwaps()` exposed for observability. All constants constructor-injected starting points, to be benchmarked. |
+
+### `qapSolver.GA.Replacement` — survivor selection strategies
+
+| Class | Responsibility |
+|---|---|
+| `GenerationalReplacement` | Full turnover: offspring are the next generation, every parent dies; fresh `Population`, input untouched. Requires λ = μ, loud `IllegalStateException` otherwise (config error, not papered over; (μ,λ)/(μ+λ) truncation are future siblings). No survivor pressure by design — breeding is selection's decision, survival of the old best is the bracket's. Deterministic, no randomness. |
+| `SteadyStateReplacement` | GENITOR-style replace-worst, in place: each child in input order replaces the *current* worst member — the batch is a sequence of λ birth events, so later children may evict earlier ones; λ = 1–2 with large μ through the engine = the classic steady-state GA. Acceptance is *unconditional* (worse-than-everyone still enters): if-better acceptance would double-dip on selection pressure and re-implement the bracket's protection; unconditional turnover keeps λ genotypes/generation flowing — what keeps plateau families moving sideways. Worst ties first-index; deterministic, O(λ·μ), no randomness. |
 
 ### `qapSolver.GA.Elitism` — elite preservation strategies
 
@@ -340,6 +350,15 @@ use `Permutations.inverseOf`.
   an in-progress cooling phase; n=1 identity with zero draws consumed;
   same-seed determinism vs cross-seed difference; timer (invocations =
   children). Synthetic instances only — no dataset dependency.
+- `GenerationalReplacementTest` — full turnover at λ = μ (fresh Population,
+  offspring references slot-for-slot in input order, input object and members
+  untouched); λ ≠ μ throws both directions; no randomness; timer.
+- `SteadyStateReplacementTest` — in-place replace-worst (same object back,
+  only the worst slot swapped); unconditional acceptance (worse-than-everyone
+  child still evicts); sequential birth semantics (later children evict
+  earlier ones; insertion order changes the survivor); first-index worst-tie
+  break; λ > μ churn against a hand-traced state; μ preserved; no randomness;
+  timer.
 - `BestKElitePreserverTest` — constructor validation (k < 0 throws, 0/1 legal);
   extract pick and best-first order with first-index tie-break, reference
   snapshots, read-only population, k = 0 empty, k ≥ μ throws (k = μ−1 legal);
@@ -429,6 +448,14 @@ use `Permutations.inverseOf`.
   `int[]` mapping tables on the breeding path. The repair chains need no
   cycle guard: each table is injective and a chain starts at a value outside
   the table's image, so termination is structural, not defensive.
+- **Steady-state accepts unconditionally** — replace-worst takes every child,
+  even one worse than the whole pool. Acceptance-if-better was rejected
+  because each pressure source stays single-owned: parent selection owns
+  selective pressure, the elitism bracket owns protection of the best, and
+  replacement owns turnover only. The batch is processed as λ sequential
+  birth events (later children can evict earlier ones), which makes the
+  generational engine reproduce a classic steady-state GA exactly at
+  λ = 1–2.
 - **Termination checked between generations ⇒ budgets are floors** — the
   engine consults criteria only at generation boundaries, so evaluation and
   time limits overshoot by at most one generation; that is accepted rather
@@ -476,8 +503,8 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- Remaining concrete steps: generational replacement (f) and NoOp
-  improvement (h) — then an end-to-end smoke run on a small closed instance.
+- Remaining concrete step: NoOp improvement (h) — then an end-to-end smoke
+  run on a small closed instance.
   Termination extras (target-value criterion, and/or Composite combinators)
   as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
