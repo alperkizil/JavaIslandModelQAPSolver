@@ -16,10 +16,11 @@ import qapSolver.Reader.QAPDataset;
  * Plain main-class test harness proving ObjectiveFunction + SolutionVerifier
  * correct against every sample solution in the deposit:
  *
- * - all 128 solutions must verify as-is and carry isValid() = true — the
- *   reader normalizes the quirks (8 inverse-convention files inverted,
- *   kra32's typo header corrected to the true optimum 88700, degenerate
- *   esc16f trivially valid);
+ * - all 136 reference solutions (128 from .sln files + 8 built-in proven
+ *   optima for the file-less instances) must verify as-is and carry
+ *   isValid() = true — the reader normalizes the quirks (8
+ *   inverse-convention files inverted, kra32's typo header corrected to the
+ *   true optimum 88700, degenerate esc16f trivially valid);
  * - kra32 specifically must carry the corrected value 88700;
  * - isValid() must agree with verify() everywhere;
  * - negative controls (tampered claimed values) must fail.
@@ -82,8 +83,8 @@ public final class SolutionVerifierTest {
             }
         }
 
-        if (verified != 128) {
-            failures.add("expected 128 valid solutions, got " + verified);
+        if (verified != 136) {
+            failures.add("expected 136 valid solutions, got " + verified);
         }
         if (inverseNormalized != 8) {
             failures.add("expected the 8 inverse-convention files normalized and valid, got "
@@ -121,7 +122,7 @@ public final class SolutionVerifierTest {
             System.out.println("FAIL: " + f);
         }
         System.out.println();
-        System.out.println("verified & valid       : " + verified + "/128");
+        System.out.println("verified & valid       : " + verified + "/136");
         System.out.println("of which normalized    : " + inverseNormalized + "/8 (inverse-convention files)");
         System.out.println("kra32 corrected->" + KRA32_TRUE_VALUE + " : " + (kra32Confirmed ? "confirmed" : "NOT confirmed"));
         System.out.println("RESULT: " + (failures.isEmpty() ? "PASS" : failures.size() + " FAILURE(S)"));

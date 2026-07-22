@@ -8,7 +8,8 @@ been built so far, the decisions behind it, and how to run it.
 
 Foundation layer complete: dataset model, readers/repositories, objective
 function, solution verification. All 136 QAPLIB instances read correctly; all
-128 sample solutions load, normalize, and verify clean. `qapSolver.Random`
+136 reference solutions verify clean (128 `.sln` files + the 8 built-in
+proven optima for the file-less instances). `qapSolver.Random`
 provides seeded, thread-reproducible randomness. The solver skeleton is in
 place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
 (the composed generational memetic GA plus one abstract class per step). First
@@ -97,7 +98,7 @@ working directory (repo root); both can be overridden via args.
 |---|---|
 | `QAPInstance` | Immutable instance: name, size n, matrices A and B as read from the `.dat` (A first). No symmetry/zero-diagonal assumptions. Getters expose internal arrays by design (hot loops) — do not mutate. |
 | `QAPSolution` *(abstract)* | Full common solution state: `instanceName`, objective value, 0-based permutation, size, and `isValid()`. Constructor takes the `QAPInstance`, validates the permutation (bijection, length = n) and **auto-verifies** via `SolutionVerifier` — valid ⇔ claimed value reproduced by the objective. Subclasses only express provenance. The verified **boundary** type (run results, future `.sln` writer) — *not* the evolving individual: that is `qapSolver.Engine`'s Candidate/EvaluatedCandidate pair, because per-construction O(n²) verification is exactly what the hot loop must not pay. |
-| `SampleQAPSolution` | A `.sln` reference solution. After reader normalization all 128 are `isValid()=true`. |
+| `SampleQAPSolution` | A QAPLIB reference solution — from a `.sln` file or the reader's built-in table for the eight file-less optima. After reader normalization all 136 are `isValid()=true`. |
 | `CustomSolution` | Hand-crafted / solver-produced solution; same constructor shape `(instance, value, permutation)`. |
 | `Permutations` | `inverseOf(p)`: converts between the two QAPLIB permutation conventions. Needed again for the future `.sln` writer. |
 
@@ -108,7 +109,8 @@ working directory (repo root); both can be overridden via args.
 | `InstanceReader` | Strict `.dat` parser: exactly `1 + 2n²` whitespace/comma-separated integer tokens, loud failure on drift. |
 | `SolutionReader` | Strict `.sln` parser (`2 + n` tokens) requiring the matching `QAPInstance` (name and n cross-checked). Applies three normalizations (below). |
 | `InstanceRepository` | Name-based access to the `.dat` directory: `get(name)`, `getFamily(prefix)` (exact family match, `familyOf` = alphabetic prefix), `getAll()`, `listNames()`. No caching; sorted, deterministic. |
-| `SolutionRepository` | Mirror over `.sln`; needs an `InstanceRepository` (construction verifies against the instance). Adds `find(name)` → `Optional` (8 instances have no `.sln`). |
+| `SolutionRepository` | Mirror over `.sln`; needs an `InstanceRepository` (construction verifies against the instance). `find(name)` → `Optional`: file if present, else the built-in optimum for the eight file-less instances (instance-gated so synthetic test dirs stay unaffected), else empty. `get`/`getAll`/`getFamily`/`listNames` deliberately stay file-only. |
+| `KnownOptimalSolutions` *(package-private)* | The eight proven optima the deposit ships without `.sln` files: esc32a–d, esc32h, esc64a (permutations from the README PDF, § Eschermann–Wunderlich) and tai10a/b (exhaustively enumerated in this project). Values + 0-based facility→location permutations hardcoded; PDF orientation verified to reproduce each optimum directly (value-driven, both orientations checked). Every `build` re-verifies via `SampleQAPSolution` auto-verification. |
 | `QAPDataset` | Facade pairing both sides by name: `getInstance`, `findSolution`, `pairs()` (all 136, solution where present), plus repository accessors. |
 | `RepositoryFiles` | Package-private shared directory listing. |
 
@@ -253,7 +255,7 @@ live in per-role subpackages.
 
 | Class | Responsibility |
 |---|---|
-| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: every instance in the data directory by default (136; the eight without a `.sln` — esc32a–d/h, esc64a, tai10a/b — run too and report n/a gaps), seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, 500 generations. Evaluator stack parameterized: `evaluatorWorkers` > 1 swaps the sequential leaf for the master–slave `MultithreadedExactEvaluator` (verified value-identical to sequential; pool shut down after each run), `cacheCapacity` = 0 drops the cache decorator (cache always outermost per the package contract; columns print n/a without it). CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run lines under a column header (seed, best, gap, found-gen, found-ev, evals, cache, time) with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
+| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: every instance in the data directory by default (136; the eight file-less instances get their reference from the reader's built-in optima, so every row reports a real gap), seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, 500 generations. Evaluator stack parameterized: `evaluatorWorkers` > 1 swaps the sequential leaf for the master–slave `MultithreadedExactEvaluator` (verified value-identical to sequential; pool shut down after each run), `cacheCapacity` = 0 drops the cache decorator (cache always outermost per the package contract; columns print n/a without it). CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run lines under a column header (seed, best, gap, found-gen, found-ev, evals, cache, time) with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -286,12 +288,15 @@ use `Permutations.inverseOf`.
 - `InstanceRepositoryTest` — counts vs dataset facts (136 total, 28 tai,
   13 sko), sorted determinism, `getAll ≡ listNames`, exact-prefix family
   matching, unknown names throw.
-- `QAPDatasetTest` — 136 pairs, 128 with solution, unmatched = known 8,
-  per-pair name/size agreement, 26 tai solutions, `find` empty vs `get` throw.
-- `SolutionVerifierTest` — 128/128 samples `isValid()=true` (8 of them via
-  normalization), `isValid()` ≡ `verify()` everywhere, kra32 carries corrected
-  88700, tampered-value negative controls, `CustomSolution` valid/invalid
-  construction.
+- `QAPDatasetTest` — 136 pairs, all 136 with solution (128 files + 8
+  built-ins pinned name-by-name with their exact optima), unmatched set
+  empty, per-pair name/size agreement, file-side counts unchanged
+  (`listNames` 128, 26 tai `.sln`), file-less `get` still throws while
+  `find` serves the built-in.
+- `SolutionVerifierTest` — 136/136 references `isValid()=true` (8 via
+  orientation normalization, 8 from the built-in table), `isValid()` ≡
+  `verify()` everywhere, kra32 carries corrected 88700, tampered-value
+  negative controls, `CustomSolution` valid/invalid construction.
 - `RandomizerTest` — bit-exact against Vigna's splitmix64.c reference vectors
   (independently cross-checked vs `java.util.SplittableRandom` at dev time);
   derivation goldens computed from the spec formula in Python (freezes the
@@ -560,6 +565,16 @@ use `Permutations.inverseOf`.
   framework (abstract steps + the composed engine); implementations group by
   role (`qapSolver.GA.Initialization` first, more as steps get concrete), so
   strategy families stay together as they multiply.
+- **The eight file-less optima are built into the reader, at the `find`
+  seam only** — the deposit publishes esc32a–d/h and esc64a optima only in
+  its README PDF and never shipped tai10a/b solutions; `KnownOptimalSolutions`
+  hardcodes all eight (PDF permutations verified to reproduce their optima in
+  direct orientation; tai10a/b recovered by exhaustive enumeration, 10!
+  candidates) and `SolutionRepository.find` serves them when the file is
+  absent and the instance exists. The file-oriented methods stay honest
+  mirrors of the directory, so file counts remain testable facts; entries are
+  auto-verified at construction, so a corrupted table cannot produce a valid
+  solution.
 - **Migration deferred to the island layer** — it is not a GA step (the
   engine would never call it), and its contract depends on island-layer
   decisions not yet made (synchronous vs mailbox exchange, topology,

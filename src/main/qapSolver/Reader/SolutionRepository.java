@@ -12,10 +12,15 @@ import qapSolver.Model.SampleQAPSolution;
 /**
  * Name-based access to a directory of QAPLIB .sln reference solutions,
  * mirroring {@link InstanceRepository}. Matching a solution to its instance
- * is by shared name; not every instance has one (eight do not), hence
- * {@link #find(String)}. Constructing a solution verifies it against its
- * instance, so this repository needs the instance side too. File parsing
- * stays in {@link SolutionReader}; no caching; all listings sorted by name.
+ * is by shared name; eight instances ship without a file, and for exactly
+ * those {@link #find(String)} falls back to the built-in proven optima in
+ * {@link KnownOptimalSolutions} (only when the paired instance repository
+ * actually holds the instance — synthetic test worlds stay unaffected). The
+ * file-oriented methods ({@code get}, {@code getAll}, {@code getFamily},
+ * {@code listNames}) deliberately remain file-only. Constructing a solution
+ * verifies it against its instance, so this repository needs the instance
+ * side too. File parsing stays in {@link SolutionReader}; no caching; all
+ * listings sorted by name.
  */
 public final class SolutionRepository {
 
@@ -45,11 +50,16 @@ public final class SolutionRepository {
     }
 
     /**
-     * Like {@link #get(String)} but returns empty if the instance has no
-     * .sln file. A file that exists but is malformed still throws.
+     * Like {@link #get(String)} but never throws for a missing file: the
+     * eight file-less proven optima come from {@link KnownOptimalSolutions}
+     * (if the instance repository holds the instance), anything else is
+     * empty. A file that exists but is malformed still throws.
      */
     public Optional<SampleQAPSolution> find(String name) throws IOException {
         if (!Files.isRegularFile(directory.resolve(name + ".sln"))) {
+            if (KnownOptimalSolutions.contains(name) && instances.listNames().contains(name)) {
+                return Optional.of(KnownOptimalSolutions.build(instances.get(name)));
+            }
             return Optional.empty();
         }
         return Optional.of(get(name));

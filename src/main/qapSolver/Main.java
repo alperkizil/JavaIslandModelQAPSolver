@@ -54,10 +54,11 @@ import qapSolver.Random.RandomSource;
  * {@code java -cp out/main qapSolver.Main [-v] [-data <dir>] [-soln <dir>]
  * [instance ...]}
  * — without instance names every instance in the data directory runs (the
- * full deposit: 136). The eight without a {@code .sln} — esc32a–d, esc32h,
- * esc64a, tai10a, tai10b — run too and report n/a gaps. {@code -v} registers
- * the {@code LoggingObserver} on every run (full per-generation trace;
- * new-best lines on stderr).
+ * full deposit: 136). The eight without a {@code .sln} file — esc32a–d,
+ * esc32h, esc64a, tai10a, tai10b — get their reference from the reader's
+ * built-in proven optima, so every row reports a real gap. {@code -v}
+ * registers the {@code LoggingObserver} on every run (full per-generation
+ * trace; new-best lines on stderr).
  *
  * <p>Exit codes: 0 = every run produced a valid (auto-verified) solution;
  * 1 = any invalid result or instance failure; 2 = usage error.
