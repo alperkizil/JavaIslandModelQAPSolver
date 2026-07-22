@@ -19,7 +19,9 @@ sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
 PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
 multi-swap), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
 `qapSolver.Engine.Evaluation` package (step (b), complete trio: exact
-baseline, caching LRU decorator, master–slave parallel evaluator).
+baseline, caching LRU decorator, master–slave parallel evaluator), and the
+`qapSolver.Engine.Termination` package (step (i): max-generations,
+evaluation-budget, time-limit, stagnation).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -45,6 +47,10 @@ java -cp out/main:out/test qapSolver.Random.RandomizerTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.ExactEvaluatorTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.CachingEvaluatorTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.MultithreadedExactEvaluatorTest
+java -cp out/main:out/test qapSolver.Engine.Termination.MaxGenerationsCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Termination.EvaluationBudgetCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Termination.TimeLimitCriterionTest
+java -cp out/main:out/test qapSolver.Engine.Termination.StagnationCriterionTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
@@ -126,6 +132,21 @@ order is therefore fixed: cache outermost, e.g.
 | `ExactEvaluator` | The baseline: sequential full O(n²) `ObjectiveFunction` evaluation per candidate on the engine thread, one `countFullEvaluation()` tick each, arrays moved zero-copy into the results, input order, no randomness. The reference every decorated/parallel stack must reproduce value-for-value. |
 | `CachingEvaluator` | Decorator over any evaluator: per batch, cache hits answered directly, same-batch repeats answered by their first occurrence, only genuinely new permutations delegated (all-hit batches never invoke the inner evaluator). Ownership holds on every path (hits/repeats consume their own candidate's array zero-copy). Never counts evaluations itself — only the inner evaluator computes. Bounded LRU (capacity constructor param; hits refresh recency); keys are defensive copies, lookups transient no-copy keys. `getHits`/`getMisses`/`getCachedCount` are the per-family measurement that decides whether the decorator earns its place. Engine-thread only ⇒ always the outermost layer. |
 | `MultithreadedExactEvaluator` | Master–slave leaf: batch partitioned into contiguous chunks over a fixed pool of named daemon workers (`workerCount` constructor param); workers compute pure `long` costs via the static `ObjectiveFunction` on the immutable instance and never see the context; the engine thread reassembles input-order results and does all counting and array moves. Replay-identical to sequential regardless of scheduling (exact costs, index order, zero randomness); memory safety via the executor's happens-before edges. Worker `RuntimeException`s rethrown as-is on the engine thread, evaluator stays usable; `shutdown()` idempotent, evaluate-after-shutdown throws. For single-island runs on large instances — island parallelism takes budget precedence. |
+
+### `qapSolver.Engine.Termination` — termination criteria
+
+Concrete `TerminationCriterion`s, engine-level like Evaluation. All are
+read-only context checks (no randomness, counters untouched) evaluated
+between generations — budget-style limits are therefore stopping *floors*:
+the generation in flight completes, overshoot ≤ one generation. Target-value
+and and/or combinators (Composite) are the planned future additions.
+
+| Class | Responsibility |
+|---|---|
+| `MaxGenerationsCriterion` | Stop at `generation ≥ limit`; as the binding criterion a run evolves exactly `limit` generations beyond initialization (generation 0). The comparable-benchmark workhorse. |
+| `EvaluationBudgetCriterion` | Stop at `fullEvaluations ≥ budget` (long). Machine-independent effort metric; cache hits never count (evaluator contract); generation-0 evaluation is on the budget. Full evaluations only — delta budgeting arrives with local search. |
+| `TimeLimitCriterion` | Stop at `elapsedMillis ≥ limit`, clock from `context.start()` (generation-0 work included). The deliberately machine-dependent one — not for comparable experiments. Unstarted context fails loudly (ISE from the clock). |
+| `StagnationCriterion` | Stop at `generationsSinceImprovement ≥ X` (strict improvements only — ties never reset; no incumbent ⇒ false). Knob pairing: races the reheating mutation — set X well above the mutation's threshold + cool-down, ideally several reheat cycles, or the run gives up before the escape mechanism acts. |
 
 ### `qapSolver.GA` — the genetic algorithm
 
@@ -252,6 +273,19 @@ use `Permutations.inverseOf`.
   permutation surfaces as the objective's IAE, evaluator usable after);
   shutdown idempotence and evaluate-after-shutdown throwing; timer.
   Synthetic instances only — no dataset dependency.
+- `MaxGenerationsCriterionTest` — constructor validation; exact stop
+  boundary (false through limit−1, true at/beyond the limit); read-only
+  (counters and stream untouched); timer.
+- `EvaluationBudgetCriterionTest` — constructor validation (long budgets
+  beyond int range legal); exact boundary at the counted budget; read-only;
+  timer.
+- `TimeLimitCriterionTest` — constructor validation; unstarted context fails
+  loudly (ISE); generous limit doesn't stop a fresh run, 1 ms limit stops
+  after a bounded 2 ms busy-wait; read-only; timer.
+- `StagnationCriterionTest` — constructor validation; no incumbent ⇒ never
+  stops; exact boundary at X stagnant generations; strict improvement resets
+  the clock (stop exactly X after it); a value tie does NOT reset; read-only;
+  timer.
 - `RandomInitializerTest` — constructor validation (μ < 1 throws); batch shape
   (size μ, valid 0-based permutations, per-candidate owned arrays, no content
   duplicates at n=20/μ=30); bit-exact stream replay from an independently
@@ -395,6 +429,13 @@ use `Permutations.inverseOf`.
   `int[]` mapping tables on the breeding path. The repair chains need no
   cycle guard: each table is injective and a chain starts at a value outside
   the table's image, so termination is structural, not defensive.
+- **Termination checked between generations ⇒ budgets are floors** — the
+  engine consults criteria only at generation boundaries, so evaluation and
+  time limits overshoot by at most one generation; that is accepted rather
+  than adding mid-generation abort paths. The stagnation criterion is
+  documented as racing the reheating mutation: its X must exceed the
+  mutation's stagnation threshold plus cool-down (ideally several reheat
+  cycles), or runs give up before the escape mechanism has acted.
 - **Evaluators: caching decorates, parallelism is a leaf** — the two planned
   evaluator features compose by different patterns, forced by thread
   confinement. Caching wraps any inner evaluator (same abstract type, engine
@@ -435,11 +476,10 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- Remaining concrete steps, each its own step-by-step piece:
-  generational replacement, NoOp improvement, and termination criteria
-  (max-generations / eval-budget / wall-clock / target-value / stagnation
-  with and/or combinators) — then an end-to-end smoke run on a small closed
-  instance.
+- Remaining concrete steps: generational replacement (f) and NoOp
+  improvement (h) — then an end-to-end smoke run on a small closed instance.
+  Termination extras (target-value criterion, and/or Composite combinators)
+  as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
   the 37 asymmetric instances — prerequisite for real `LocalImprovement`
   implementations (2-swap descent, SA).
