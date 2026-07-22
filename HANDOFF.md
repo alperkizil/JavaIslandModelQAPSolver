@@ -16,7 +16,8 @@ concrete operators are landing, all harness-tested:
 `qapSolver.GA.Initialization.RandomInitializer` (step (a)), the
 `qapSolver.GA.Selection` package (step (c): tournament, roulette wheel, SUS,
 sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
-PMX), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
+PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
+multi-swap), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -45,6 +46,7 @@ java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.StochasticUniversalSamplingSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.SigmaScalingSelectorTest
 java -cp out/main:out/test qapSolver.GA.Crossover.PartiallyMappedCrossoverTest
+java -cp out/main:out/test qapSolver.GA.Mutation.ReheatingSwapMutationTest
 java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
 ```
 
@@ -142,6 +144,12 @@ live in per-role subpackages.
 |---|---|
 | `PartiallyMappedCrossover` | PMX in the Watchmaker `ListOrderCrossover` shape: two uniform cut draws as an *ordered* pair ⇒ the exchanged segment may wrap around the array end, length uniform on 0..n−1; equal draws (probability 1/n) ⇒ empty segment ⇒ children are parent clones (kept as in the reference — deliberate clone-through stays the engine's rate path). Segment positions swap between the parents; outside positions keep the own parent's value, conflicts resolved by following the segment's value→value tables (value-indexed `int[]`, not boxed maps). Chains terminate structurally: each table is injective and a chain starts outside its image — no visited-set needed. Two children per call, exactly two `nextInt(n)` draws, O(n) total, parents read-only. |
 
+### `qapSolver.GA.Mutation` — mutation strategies
+
+| Class | Responsibility |
+|---|---|
+| `ReheatingSwapMutation` | Multi-swap mutation with an SA-style reheating schedule — the designated escape mechanism from local optima. Temperature in swaps-per-child: baseline `max(1, round(baselineFraction·n))`; when fully cooled *and* `generationsSinceImprovement ≥ stagnationThreshold`, reheats to `max(2, round(hotFraction·n))` and cools geometrically (`T ← max(baseline, T·coolingFactor)` per generation). Both tiers scale with n (basin size ∝ n per the measured ~0.25·n autocorrelation length; 0.25 is the data-backed `hotFraction` default). Persistent stagnation ⇒ periodic kick cycles; improvement resets the stagnation clock but never quenches a hot phase (elitism + incumbent make hot generations safe). Per-generation island state updated lazily on the first `mutate` of each generation; all same-generation children get the same k; per child exactly 2k draws (`nextInt(n)`, `nextInt(n−1)`+shift ⇒ k distinct-position transpositions — the random-walk model the correlation lengths were measured with). n=1 ⇒ identity, zero draws. `getCurrentSwaps()` exposed for observability. All constants constructor-injected starting points, to be benchmarked. |
+
 ### `qapSolver.GA.Elitism` — elite preservation strategies
 
 | Class | Responsibility |
@@ -234,6 +242,19 @@ use `Permutations.inverseOf`.
   mapping chains, n=30); same-seed determinism vs cross-seed difference;
   n=1 edge; timer (invocations = pairs). Synthetic parents only — no dataset
   dependency.
+- `ReheatingSwapMutationTest` — constructor validation (fractions ∉ (0,1],
+  hot < baseline, α ∉ (0,1), S < 1, NaN-proof); mutation contract (in-place
+  on the same array, permutation validity, baseline at n=20 ⇒ exactly one
+  transposition ⇒ exactly 2 changed positions); bit-exact replay of the
+  2k-draw swap sequence over two same-generation children with stream-position
+  agreement; n-scaling of both tiers (n=20 vs n=100: baseline 1 vs 2, hot 5
+  vs 25); full reheat cycle against a hard-coded temperature trace
+  ({1,1,1,25,13,6,3,2,1,25} for α=0.5, S=3 — reheat at threshold, geometric
+  cooling, re-reheat under persistent stagnation); improvement resets the
+  stagnation clock (no reheat at the would-be generation) but does not quench
+  an in-progress cooling phase; n=1 identity with zero draws consumed;
+  same-seed determinism vs cross-seed difference; timer (invocations =
+  children). Synthetic instances only — no dataset dependency.
 - `BestKElitePreserverTest` — constructor validation (k < 0 throws, 0/1 legal);
   extract pick and best-first order with first-index tie-break, reference
   snapshots, read-only population, k = 0 empty, k ≥ μ throws (k = μ−1 legal);
@@ -323,6 +344,18 @@ use `Permutations.inverseOf`.
   `int[]` mapping tables on the breeding path. The repair chains need no
   cycle guard: each table is injective and a chain starts at a value outside
   the table's image, so termination is structural, not defensive.
+- **Mutation as SA reheating, strengths as fractions of n** — the escape
+  mechanism is temperature-shaped (reheat on stagnation only after full
+  cool-down, then geometric cooling) rather than a monotone stagnation ramp,
+  so kicks are episodic and self-limiting; persistent stagnation yields
+  periodic cycles instead of a permanently hot island. Improvements reset
+  the stagnation clock but deliberately do not quench cooling — elitism and
+  the incumbent copy make hot generations safe. Both strength tiers scale
+  with n because the measured autocorrelation length is ~0.25·n across all
+  families (basin size grows with n): absolute swap counts would under-kick
+  large instances. Defaults are starting points for benchmarking, all
+  constructor-injected; per-island hot/cold variants come free via
+  construction.
 - **Concrete operators in per-role subpackages** — `qapSolver.GA` keeps the
   framework (abstract steps + the composed engine); implementations group by
   role (`qapSolver.GA.Initialization` first, more as steps get concrete), so
@@ -340,8 +373,8 @@ use `Permutations.inverseOf`.
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
 - Remaining concrete steps, each its own step-by-step piece:
-  exact evaluator over `ObjectiveFunction`, swap mutation, generational
-  replacement, NoOp improvement, and termination criteria
+  exact evaluator over `ObjectiveFunction`, generational replacement,
+  NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
   with and/or combinators) — then an end-to-end smoke run on a small closed
   instance.
