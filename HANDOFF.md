@@ -15,7 +15,8 @@ place: `qapSolver.Engine` (metaheuristic-generic runtime) and `qapSolver.GA`
 concrete operators are landing, all harness-tested:
 `qapSolver.GA.Initialization.RandomInitializer` (step (a)), the
 `qapSolver.GA.Selection` package (step (c): tournament, roulette wheel, SUS,
-sigma scaling), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
+sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
+PMX), and `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -43,6 +44,7 @@ java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.StochasticUniversalSamplingSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.SigmaScalingSelectorTest
+java -cp out/main:out/test qapSolver.GA.Crossover.PartiallyMappedCrossoverTest
 java -cp out/main:out/test qapSolver.GA.Elitism.BestKElitePreserverTest
 ```
 
@@ -134,6 +136,12 @@ live in per-role subpackages.
 | `StochasticUniversalSamplingSelector` | One start double + count evenly spaced pointers over the same rank table: every member's copy count is its expectation floored or ceiled (minimal sampling variance). Result is Fisher–Yates-shuffled (count−1 ints) so the rank-ordered walk doesn't self-pair under the engine's consecutive pairing. |
 | `SigmaScalingSelector` | Standalone Watchmaker-style sigma scaling, roulette-sampled: per generation w = 1 + (mean−f)/2σ (minimization form), floored at 0.1 when ≤ 0, σ = 0 ⇒ uniform. Parameterless — pressure adapts to population statistics; the one proportional scheme that stays meaningful on QAP's compressed relative spreads. |
 
+### `qapSolver.GA.Crossover` — crossover strategies
+
+| Class | Responsibility |
+|---|---|
+| `PartiallyMappedCrossover` | PMX in the Watchmaker `ListOrderCrossover` shape: two uniform cut draws as an *ordered* pair ⇒ the exchanged segment may wrap around the array end, length uniform on 0..n−1; equal draws (probability 1/n) ⇒ empty segment ⇒ children are parent clones (kept as in the reference — deliberate clone-through stays the engine's rate path). Segment positions swap between the parents; outside positions keep the own parent's value, conflicts resolved by following the segment's value→value tables (value-indexed `int[]`, not boxed maps). Chains terminate structurally: each table is injective and a chain starts outside its image — no visited-set needed. Two children per call, exactly two `nextInt(n)` draws, O(n) total, parents read-only. |
+
 ### `qapSolver.GA.Elitism` — elite preservation strategies
 
 | Class | Responsibility |
@@ -213,6 +221,19 @@ use `Permutations.inverseOf`.
   extinct); compressed-spread pressure (0.9% spread → ~8× best/worst where a
   raw wheel would flatten); μ = 1 edge; determinism; timer. Synthetic members
   only.
+- `PartiallyMappedCrossoverTest` — recombination contract (exactly two
+  children, fresh owned arrays — never a parent's or each other's, parents
+  byte-unchanged, valid permutations); bit-exact replay against an
+  independent boxed transliteration of the Watchmaker reference algorithm
+  (3 seeds × 5 sizes incl. n=2 and n=60, wrap cases included) with final
+  stream-position agreement (exactly two draws); structural semantics via
+  mirrored cut-point draws (segment carries the other parent's values,
+  conflict-free outside positions keep the own parent's, 50 seeds at n=15);
+  empty-segment clone case (n=5 seed sweep, ≥20 degenerate draws verified
+  clone-exact); chain-repair stress on rotation and reversal parents (maximal
+  mapping chains, n=30); same-seed determinism vs cross-seed difference;
+  n=1 edge; timer (invocations = pairs). Synthetic parents only — no dataset
+  dependency.
 - `BestKElitePreserverTest` — constructor validation (k < 0 throws, 0/1 legal);
   extract pick and best-first order with first-index tie-break, reference
   snapshots, read-only population, k = 0 empty, k ≥ μ throws (k = μ−1 legal);
@@ -294,6 +315,14 @@ use `Permutations.inverseOf`.
   deliberately standalone in Watchmaker shape rather than a weighting×sampler
   matrix). SUS shuffles its rank-ordered picks so the engine's consecutive
   pairing doesn't self-pair.
+- **PMX in the reference's shape, primitive inside** — the port keeps
+  Watchmaker's observable semantics (ordered wraparound cut points, segment
+  length uniform on 0..n−1, empty segment ⇒ parent clones) so the harness can
+  pin the operator bit-exactly to an independent transliteration of the
+  reference; the boxed List/HashMap machinery is replaced by value-indexed
+  `int[]` mapping tables on the breeding path. The repair chains need no
+  cycle guard: each table is injective and a chain starts at a value outside
+  the table's image, so termination is structural, not defensive.
 - **Concrete operators in per-role subpackages** — `qapSolver.GA` keeps the
   framework (abstract steps + the composed engine); implementations group by
   role (`qapSolver.GA.Initialization` first, more as steps get concrete), so
@@ -311,9 +340,8 @@ use `Permutations.inverseOf`.
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
 - Remaining concrete steps, each its own step-by-step piece:
-  exact evaluator over `ObjectiveFunction`, a
-  position-preserving crossover, swap mutation, generational replacement,
-  NoOp improvement, and termination criteria
+  exact evaluator over `ObjectiveFunction`, swap mutation, generational
+  replacement, NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
   with and/or combinators) — then an end-to-end smoke run on a small closed
   instance.
