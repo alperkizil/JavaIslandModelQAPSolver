@@ -18,8 +18,8 @@ concrete operators are landing, all harness-tested:
 sigma scaling), `qapSolver.GA.Crossover.PartiallyMappedCrossover` (step (d):
 PMX), `qapSolver.GA.Mutation.ReheatingSwapMutation` (step (e): SA-reheat
 multi-swap), `qapSolver.GA.Elitism.BestKElitePreserver` (step (g)), and the
-`qapSolver.Engine.Evaluation` package (step (b): exact baseline evaluator
-and the caching LRU decorator; master–slave parallel evaluator to follow).
+`qapSolver.Engine.Evaluation` package (step (b), complete trio: exact
+baseline, caching LRU decorator, master–slave parallel evaluator).
 The skeleton itself is still
 compile-verified only; its dedicated test harness remains deferred and should
 land with the next concrete steps.
@@ -44,6 +44,7 @@ java -cp out/main:out/test qapSolver.Objective.SolutionVerifierTest
 java -cp out/main:out/test qapSolver.Random.RandomizerTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.ExactEvaluatorTest
 java -cp out/main:out/test qapSolver.Engine.Evaluation.CachingEvaluatorTest
+java -cp out/main:out/test qapSolver.Engine.Evaluation.MultithreadedExactEvaluatorTest
 java -cp out/main:out/test qapSolver.GA.Initialization.RandomInitializerTest
 java -cp out/main:out/test qapSolver.GA.Selection.TournamentSelectorTest
 java -cp out/main:out/test qapSolver.GA.Selection.RouletteWheelSelectorTest
@@ -124,6 +125,7 @@ order is therefore fixed: cache outermost, e.g.
 |---|---|
 | `ExactEvaluator` | The baseline: sequential full O(n²) `ObjectiveFunction` evaluation per candidate on the engine thread, one `countFullEvaluation()` tick each, arrays moved zero-copy into the results, input order, no randomness. The reference every decorated/parallel stack must reproduce value-for-value. |
 | `CachingEvaluator` | Decorator over any evaluator: per batch, cache hits answered directly, same-batch repeats answered by their first occurrence, only genuinely new permutations delegated (all-hit batches never invoke the inner evaluator). Ownership holds on every path (hits/repeats consume their own candidate's array zero-copy). Never counts evaluations itself — only the inner evaluator computes. Bounded LRU (capacity constructor param; hits refresh recency); keys are defensive copies, lookups transient no-copy keys. `getHits`/`getMisses`/`getCachedCount` are the per-family measurement that decides whether the decorator earns its place. Engine-thread only ⇒ always the outermost layer. |
+| `MultithreadedExactEvaluator` | Master–slave leaf: batch partitioned into contiguous chunks over a fixed pool of named daemon workers (`workerCount` constructor param); workers compute pure `long` costs via the static `ObjectiveFunction` on the immutable instance and never see the context; the engine thread reassembles input-order results and does all counting and array moves. Replay-identical to sequential regardless of scheduling (exact costs, index order, zero randomness); memory safety via the executor's happens-before edges. Worker `RuntimeException`s rethrown as-is on the engine thread, evaluator stays usable; `shutdown()` idempotent, evaluate-after-shutdown throws. For single-island runs on large instances — island parallelism takes budget precedence. |
 
 ### `qapSolver.GA` — the genetic algorithm
 
@@ -240,6 +242,16 @@ use `Permutations.inverseOf`.
   fitnesses, 6 vs 11 evaluations); no randomness consumed; timer (decorator
   counts every call, inner only delegated ones). Synthetic instances only —
   no dataset dependency.
+- `MultithreadedExactEvaluatorTest` — constructor validation; equivalence
+  with sequential `ExactEvaluator` across workers {1,3,8} × batch sizes
+  {0,1,2,7,8,25} (slot-exact fitness, zero-copy identity, counting) plus a
+  100×n=40 stress batch on 4 workers; the sanctioned stack
+  `CachingEvaluator(MultithreadedExactEvaluator)` (repeat batch: 1 new
+  evaluation, cached values identical through the stack, counters); no
+  randomness consumed; worker-exception propagation (wrong-length
+  permutation surfaces as the objective's IAE, evaluator usable after);
+  shutdown idempotence and evaluate-after-shutdown throwing; timer.
+  Synthetic instances only — no dataset dependency.
 - `RandomInitializerTest` — constructor validation (μ < 1 throws); batch shape
   (size μ, valid 0-based permutations, per-candidate owned arrays, no content
   duplicates at n=20/μ=30); bit-exact stream replay from an independently
@@ -423,8 +435,6 @@ use `Permutations.inverseOf`.
 - Engine/GA test harness (deferred from the skeleton step): context
   bookkeeping, candidate/population invariants, lifecycle guards, then a
   stubbed-step test pinning the engine's call order and contract checks.
-- Remaining evaluator of the designed trio: `MultithreadedExactEvaluator`
-  (master–slave leaf).
 - Remaining concrete steps, each its own step-by-step piece:
   generational replacement, NoOp improvement, and termination criteria
   (max-generations / eval-budget / wall-clock / target-value / stagnation
