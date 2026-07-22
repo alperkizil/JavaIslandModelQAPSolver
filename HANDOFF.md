@@ -29,10 +29,12 @@ evaluation-budget, time-limit, stagnation). Run observability landed with
 never an engine flag) over the shared `qapSolver.Engine.PopulationStatistics`
 utility.
 The first end-to-end run of the composed cycle
-landed as `qapSolver.Main` — the GA smoke runner over small closed instances
-(curated 8 × seeds 1–5: 40/40 results auto-verified valid, 13/40 matched the
-proven optimum, ~3 s total). The engine/GA skeleton's dedicated unit harness
-remains deferred and should land with the next concrete steps.
+landed as `qapSolver.Main` — the GA smoke runner, now sweeping the whole
+QAPLIB deposit by default (136 instances × seeds 1–5 = 680 runs, all
+auto-verified valid, 87 matched their `.sln` reference, ~90 s sequential;
+evaluator selectable sequential/parallel with optional cache). The engine/GA
+skeleton's dedicated unit harness remains deferred and should land with the
+next concrete steps.
 
 ## Layout & toolchain
 
@@ -251,7 +253,7 @@ live in per-role subpackages.
 
 | Class | Responsibility |
 |---|---|
-| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: curated 14 defaults — the small eight (nug12, had12, rou12, scr12, chr12a, tai12a, esc16a, lipa20a: one per family character) plus the mid-size closed six (bur26a, nug30, tho30, tai30b, ste36a, sko42: adds the asymmetric/nonzero-diagonal bur case, the structured tai-b series, the largest closed sko), all with `.sln` — seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, caching(exact) capacity 100 000, 500 generations. CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run lines under a column header (seed, best, gap, found-gen, found-ev, evals, cache, time) with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
+| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: every instance in the data directory by default (136; the eight without a `.sln` — esc32a–d/h, esc64a, tai10a/b — run too and report n/a gaps), seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, 500 generations. Evaluator stack parameterized: `evaluatorWorkers` > 1 swaps the sequential leaf for the master–slave `MultithreadedExactEvaluator` (verified value-identical to sequential; pool shut down after each run), `cacheCapacity` = 0 drops the cache decorator (cache always outermost per the package contract; columns print n/a without it). CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run lines under a column header (seed, best, gap, found-gen, found-ev, evals, cache, time) with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -579,12 +581,17 @@ use `Permutations.inverseOf`.
   in this configuration; re-measure when duplicates rise (dedup work, island
   convergence). Late improvements at generation 400+ on several runs show
   the reheating mutation escaping local optima as designed.
-  Mid-size tier (added after the first sweep; 70 runs total, ~5 s): bur26a
-  mean gap 0.24% and tai30b 3.6% (structured families suit the GA); nug30 /
-  tho30 / sko42 9–10% and ste36a 23.6% (the grind local search must close).
-  Most n ≥ 30 runs still improve at generation 300–500 ⇒ 500 generations is
-  not converged there; cache hit rate ≈ 0% at n ≥ 26 (duplicate genotypes
-  vanish as n! grows).
+  Full-library sweep (now the default; 680 runs, ~90 s sequential): esc16
+  and solvable esc32 hit their optimum 5/5 almost everywhere (plateau
+  families are trivial for the GA); bur ≤ 0.3% and small tai-b ≤ 2%,
+  tai64c 1.1% — but large structured tai-b blows up (tai80b–tai150b
+  18–23%); lipa-a flat at 1.4–2.6% vs lipa-b 12–27%; chr/ste are the
+  worst-variance families (worst runs 50–74%); sko / tai-a / wil / tho
+  grind at 5–14%; tai256c 7%. Most n ≥ 30 runs still improve at generation
+  300–500 ⇒ 500 generations is not converged there; cache hit rate ≈ 0%
+  for n ≥ 22 (duplicate genotypes vanish as n! grows) — decorator confirmed
+  not earning its place at these settings. Slowest instances per 5 seeds:
+  tai256c ~10 s, tai150b/tho150 ~4 s.
   Termination extras (target-value criterion, and/or Composite combinators)
   as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
