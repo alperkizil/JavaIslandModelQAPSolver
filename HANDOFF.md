@@ -251,7 +251,7 @@ live in per-role subpackages.
 
 | Class | Responsibility |
 |---|---|
-| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: curated 8 defaults (nug12, had12, rou12, scr12, chr12a, tai12a, esc16a, lipa20a — one per family character, all closed, all with `.sln`), seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, caching(exact) capacity 100 000, 500 generations. CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run line shows best/gap/found-at/evaluations/cache-rate/time with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
+| `Main` | First end-to-end runner: the composed generational memetic GA in its pure-GA baseline shape (`NoOpImprovement`) over small closed instances, reporting each run's gap to the `.sln` reference. Every tunable is a **local variable in one parameter block at the top of `main`**, bundled into the immutable private `GAConfiguration` handed to the run helpers — parameter testing is editing (or looping) that block. Agreed smoke setup: curated 14 defaults — the small eight (nug12, had12, rou12, scr12, chr12a, tai12a, esc16a, lipa20a: one per family character) plus the mid-size closed six (bur26a, nug30, tho30, tai30b, ste36a, sko42: adds the asymmetric/nonzero-diagonal bur case, the structured tai-b series, the largest closed sko), all with `.sln` — seeds 1–5, μ = λ = 100, tournament(3, 1.0), PMX @ 0.9, reheating swap (0.05/0.25/0.5/20), best-2 elitism, generational replacement, caching(exact) capacity 100 000, 500 generations. CLI: instance names override the set; `-v` registers `LoggingObserver` per run; `-data`/`-soln` override directories. Per run: fresh `RandomSource(seed)`, stream id 0, fresh step objects (steps are stateful) — bit-reproducible; per-run lines under a column header (seed, best, gap, found-gen, found-ev, evals, cache, time) with loud `INVALID!`/`BELOW-REF!` markers; summary table per instance. Exit 0 = every run's `CustomSolution` auto-verified valid (harness convention). Runtime output is ASCII-only (consoles with non-UTF-8 charsets). |
 
 ## `.sln` normalizations (SolutionReader)
 
@@ -579,6 +579,12 @@ use `Permutations.inverseOf`.
   in this configuration; re-measure when duplicates rise (dedup work, island
   convergence). Late improvements at generation 400+ on several runs show
   the reheating mutation escaping local optima as designed.
+  Mid-size tier (added after the first sweep; 70 runs total, ~5 s): bur26a
+  mean gap 0.24% and tai30b 3.6% (structured families suit the GA); nug30 /
+  tho30 / sko42 9–10% and ste36a 23.6% (the grind local search must close).
+  Most n ≥ 30 runs still improve at generation 300–500 ⇒ 500 generations is
+  not converged there; cache hit rate ≈ 0% at n ≥ 26 (duplicate genotypes
+  vanish as n! grows).
   Termination extras (target-value criterion, and/or Composite combinators)
   as needed.
 - Delta (swap) evaluation utility — the general two-orientation formula for
