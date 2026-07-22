@@ -47,11 +47,13 @@ import qapSolver.Random.RandomSource;
  * <p>Usage:
  * {@code java -cp out/main qapSolver.Main [-v] [-data <dir>] [-soln <dir>]
  * [instance ...]}
- * — without instance names the default curated eight run (nug12, had12,
- * rou12, scr12, chr12a, tai12a, esc16a, lipa20a: one per family character,
- * all closed, all with a {@code .sln}). {@code -v} registers the
- * {@code LoggingObserver} on every run (full per-generation trace; new-best
- * lines on stderr).
+ * — without instance names the default curated fourteen run: the small eight
+ * (nug12, had12, rou12, scr12, chr12a, tai12a, esc16a, lipa20a — one per
+ * family character) plus the mid-size closed six (bur26a, nug30, tho30,
+ * tai30b, ste36a, sko42 — adds the asymmetric/nonzero-diagonal bur case, the
+ * structured tai-b series and the largest closed sko). All closed, all with
+ * a {@code .sln}. {@code -v} registers the {@code LoggingObserver} on every
+ * run (full per-generation trace; new-best lines on stderr).
  *
  * <p>Exit codes: 0 = every run produced a valid (auto-verified) solution;
  * 1 = any invalid result or instance failure; 2 = usage error.
@@ -67,7 +69,8 @@ public final class Main {
     public static void main(String[] args) {
         // ---- parameters (edit here for parameter testing) ----
         List<String> defaultInstances = Arrays.asList(
-                "nug12", "had12", "rou12", "scr12", "chr12a", "tai12a", "esc16a", "lipa20a");
+                "nug12", "had12", "rou12", "scr12", "chr12a", "tai12a", "esc16a", "lipa20a",
+                "bur26a", "nug30", "tho30", "tai30b", "ste36a", "sko42");
         long[] seeds = {1, 2, 3, 4, 5};
         int populationSize = 100;
         int offspringCount = populationSize; // generational replacement requires λ = μ
@@ -156,6 +159,8 @@ public final class Main {
         InstanceReport report = new InstanceReport(name, instance.getSize(), ref);
         System.out.printf(Locale.ROOT, "%n%s  (n=%d, ref %s)%n",
                 name, instance.getSize(), ref >= 0 ? String.valueOf(ref) : "n/a, no .sln");
+        System.out.printf(Locale.ROOT, "  %4s | %9s | %8s | %9s | %9s | %5s | %6s | %6s%n",
+                "seed", "best", "gap", "found-gen", "found-ev", "evals", "cache", "time");
         try {
             for (long seed : seeds) {
                 if (verbose) {
@@ -171,7 +176,7 @@ public final class Main {
                     marker += "  BELOW-REF!";
                 }
                 System.out.printf(Locale.ROOT,
-                        "  seed %d | best %8d | gap %8s | found g%3d/e%-5d | evals %5d | cache %5.1f%% | %5.2fs%s%n",
+                        "  %4d | %9d | %8s | %9d | %9d | %5d | %5.1f%% | %5.2fs%s%n",
                         result.seed, result.best.getValue(), gapString(result.best.getValue(), ref),
                         result.foundGeneration, result.foundEvaluations, result.fullEvaluations,
                         result.hitRatePct(), result.millis / 1000.0, marker);
