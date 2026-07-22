@@ -11,6 +11,8 @@ import java.util.Locale;
 import qapSolver.Engine.AlgorithmContext;
 import qapSolver.Engine.Evaluation.CachingEvaluator;
 import qapSolver.Engine.Evaluation.ExactEvaluator;
+import qapSolver.Engine.Evaluation.MultithreadedExactEvaluator;
+import qapSolver.Engine.FitnessEvaluator;
 import qapSolver.Engine.Observation.LoggingObserver;
 import qapSolver.Engine.Termination.MaxGenerationsCriterion;
 import qapSolver.GA.GeneticAlgorithm;
@@ -28,10 +30,10 @@ import qapSolver.Random.RandomSource;
 
 /**
  * Smoke-test entry point: the composed generational memetic GA in its pure-GA
- * baseline shape ({@code NoOpImprovement}) against small closed QAPLIB
- * instances, reporting each run's gap to the {@code .sln} reference value.
- * This is the first end-to-end exercise of the whole engine composition on
- * real dataset instances.
+ * baseline shape ({@code NoOpImprovement}) against QAPLIB instances,
+ * reporting each run's gap to the {@code .sln} reference value. This is the
+ * first end-to-end exercise of the whole engine composition on real dataset
+ * instances.
  *
  * <p>Every tunable parameter is a local variable in the parameter block at
  * the top of {@link #main}, bundled into one immutable {@link GAConfiguration}
@@ -42,18 +44,20 @@ import qapSolver.Random.RandomSource;
  * caching(exact) evaluation with capacity 100&nbsp;000, 500 generations, and
  * seeds 1–5 — five independent runs per instance, each with its own
  * {@code RandomSource} (stream id 0), so every run is bit-reproducible on any
- * JDK.
+ * JDK. The evaluator stack is parameterized too: {@code evaluatorWorkers}
+ * &gt; 1 swaps the sequential leaf for the master–slave
+ * {@code MultithreadedExactEvaluator} (replay-identical results, pool shut
+ * down after each run), {@code cacheCapacity} = 0 drops the cache decorator;
+ * stacking order stays cache-outermost per the evaluation package contract.
  *
  * <p>Usage:
  * {@code java -cp out/main qapSolver.Main [-v] [-data <dir>] [-soln <dir>]
  * [instance ...]}
- * — without instance names the default curated fourteen run: the small eight
- * (nug12, had12, rou12, scr12, chr12a, tai12a, esc16a, lipa20a — one per
- * family character) plus the mid-size closed six (bur26a, nug30, tho30,
- * tai30b, ste36a, sko42 — adds the asymmetric/nonzero-diagonal bur case, the
- * structured tai-b series and the largest closed sko). All closed, all with
- * a {@code .sln}. {@code -v} registers the {@code LoggingObserver} on every
- * run (full per-generation trace; new-best lines on stderr).
+ * — without instance names every instance in the data directory runs (the
+ * full deposit: 136). The eight without a {@code .sln} — esc32a–d, esc32h,
+ * esc64a, tai10a, tai10b — run too and report n/a gaps. {@code -v} registers
+ * the {@code LoggingObserver} on every run (full per-generation trace;
+ * new-best lines on stderr).
  *
  * <p>Exit codes: 0 = every run produced a valid (auto-verified) solution;
  * 1 = any invalid result or instance failure; 2 = usage error.
@@ -68,9 +72,7 @@ public final class Main {
 
     public static void main(String[] args) {
         // ---- parameters (edit here for parameter testing) ----
-        List<String> defaultInstances = Arrays.asList(
-                "nug12", "had12", "rou12", "scr12", "chr12a", "tai12a", "esc16a", "lipa20a",
-                "bur26a", "nug30", "tho30", "tai30b", "ste36a", "sko42");
+        // instance set: all instances in the data directory; CLI names override
         long[] seeds = {1, 2, 3, 4, 5};
         int populationSize = 100;
         int offspringCount = populationSize; // generational replacement requires λ = μ
@@ -82,7 +84,8 @@ public final class Main {
         double coolingFactor = 0.5;
         int stagnationThreshold = 20;
         int eliteCount = 2;
-        int cacheCapacity = 100_000;
+        int cacheCapacity = 100_000; // 0 = no fitness cache
+        int evaluatorWorkers = 1;    // 1 = sequential exact; >1 = master-slave parallel evaluation
         int maxGenerations = 500;
         // ------------------------------------------------------
 
@@ -105,13 +108,20 @@ public final class Main {
                 names.add(arg);
             }
         }
+        QAPDataset dataset = new QAPDataset(datDir, slnDir);
         if (names.isEmpty()) {
-            names.addAll(defaultInstances);
+            try {
+                names.addAll(dataset.getInstanceRepository().listNames());
+            } catch (IOException e) {
+                System.err.println("ERROR listing instances in " + datDir + ": " + e.getMessage());
+                System.exit(1);
+            }
         }
 
         GAConfiguration config = new GAConfiguration(populationSize, offspringCount,
                 crossoverRate, tournamentSize, winProbability, baselineFraction, hotFraction,
-                coolingFactor, stagnationThreshold, eliteCount, cacheCapacity, maxGenerations);
+                coolingFactor, stagnationThreshold, eliteCount, cacheCapacity, evaluatorWorkers,
+                maxGenerations);
 
         System.out.println("QAP GA smoke run - pure-GA baseline (no local improvement)");
         System.out.printf(Locale.ROOT,
@@ -120,14 +130,18 @@ public final class Main {
         System.out.printf(Locale.ROOT,
                 "  mutation=reheating-swap(base=%.2f,hot=%.2f,cool=%.2f,stagnation=%d)%n",
                 baselineFraction, hotFraction, coolingFactor, stagnationThreshold);
+        String evaluatorDesc = evaluatorWorkers > 1
+                ? "mt-exact(workers=" + evaluatorWorkers + ")" : "exact";
+        if (cacheCapacity > 0) {
+            evaluatorDesc = "caching(" + evaluatorDesc + ",cap=" + cacheCapacity + ")";
+        }
         System.out.printf(Locale.ROOT,
-                "  elitism=best-%d  replacement=generational  evaluator=caching(exact,cap=%d)%n",
-                eliteCount, cacheCapacity);
+                "  elitism=best-%d  replacement=generational  evaluator=%s%n",
+                eliteCount, evaluatorDesc);
         System.out.printf(Locale.ROOT,
-                "  termination=%d generations  seeds=%s  data=%s%n",
-                maxGenerations, Arrays.toString(seeds), datDir);
+                "  termination=%d generations  seeds=%s  data=%s (%d instances)%n",
+                maxGenerations, Arrays.toString(seeds), datDir, names.size());
 
-        QAPDataset dataset = new QAPDataset(datDir, slnDir);
         long sweepStart = System.nanoTime();
         List<InstanceReport> reports = new ArrayList<>();
         for (String name : names) {
@@ -159,7 +173,7 @@ public final class Main {
         InstanceReport report = new InstanceReport(name, instance.getSize(), ref);
         System.out.printf(Locale.ROOT, "%n%s  (n=%d, ref %s)%n",
                 name, instance.getSize(), ref >= 0 ? String.valueOf(ref) : "n/a, no .sln");
-        System.out.printf(Locale.ROOT, "  %4s | %9s | %8s | %9s | %9s | %5s | %6s | %6s%n",
+        System.out.printf(Locale.ROOT, "  %4s | %10s | %9s | %9s | %9s | %5s | %6s | %6s%n",
                 "seed", "best", "gap", "found-gen", "found-ev", "evals", "cache", "time");
         try {
             for (long seed : seeds) {
@@ -176,10 +190,10 @@ public final class Main {
                     marker += "  BELOW-REF!";
                 }
                 System.out.printf(Locale.ROOT,
-                        "  %4d | %9d | %8s | %9d | %9d | %5d | %5.1f%% | %5.2fs%s%n",
+                        "  %4d | %10d | %9s | %9d | %9d | %5d | %6s | %5.2fs%s%n",
                         result.seed, result.best.getValue(), gapString(result.best.getValue(), ref),
                         result.foundGeneration, result.foundEvaluations, result.fullEvaluations,
-                        result.hitRatePct(), result.millis / 1000.0, marker);
+                        result.cacheString(), result.millis / 1000.0, marker);
             }
         } catch (RuntimeException e) {
             System.err.printf(Locale.ROOT, "%nERROR running %s:%n", name);
@@ -197,25 +211,37 @@ public final class Main {
         if (verbose) {
             context.addObserver(new LoggingObserver());
         }
-        CachingEvaluator evaluator = new CachingEvaluator(new ExactEvaluator(), config.cacheCapacity);
-        GeneticAlgorithm ga = new GeneticAlgorithm(context,
-                new MaxGenerationsCriterion(config.maxGenerations),
-                new RandomInitializer(config.populationSize),
-                evaluator,
-                new TournamentSelector(config.tournamentSize, config.winProbability),
-                new PartiallyMappedCrossover(),
-                new ReheatingSwapMutation(config.baselineFraction, config.hotFraction,
-                        config.coolingFactor, config.stagnationThreshold),
-                new GenerationalReplacement(),
-                new BestKElitePreserver(config.eliteCount),
-                new NoOpImprovement(),
-                config.offspringCount, config.crossoverRate);
-        CustomSolution best = ga.run();
-        return new RunResult(seed, best,
-                context.getBestFoundGeneration(), context.getBestFoundEvaluations(),
-                context.getFullEvaluations(),
-                evaluator.getHits(), evaluator.getHits() + evaluator.getMisses(),
-                context.elapsedMillis());
+        FitnessEvaluator leaf = config.evaluatorWorkers > 1
+                ? new MultithreadedExactEvaluator(config.evaluatorWorkers)
+                : new ExactEvaluator();
+        CachingEvaluator cache = config.cacheCapacity > 0
+                ? new CachingEvaluator(leaf, config.cacheCapacity) : null;
+        FitnessEvaluator evaluator = cache != null ? cache : leaf;
+        try {
+            GeneticAlgorithm ga = new GeneticAlgorithm(context,
+                    new MaxGenerationsCriterion(config.maxGenerations),
+                    new RandomInitializer(config.populationSize),
+                    evaluator,
+                    new TournamentSelector(config.tournamentSize, config.winProbability),
+                    new PartiallyMappedCrossover(),
+                    new ReheatingSwapMutation(config.baselineFraction, config.hotFraction,
+                            config.coolingFactor, config.stagnationThreshold),
+                    new GenerationalReplacement(),
+                    new BestKElitePreserver(config.eliteCount),
+                    new NoOpImprovement(),
+                    config.offspringCount, config.crossoverRate);
+            CustomSolution best = ga.run();
+            return new RunResult(seed, best,
+                    context.getBestFoundGeneration(), context.getBestFoundEvaluations(),
+                    context.getFullEvaluations(),
+                    cache != null ? cache.getHits() : 0,
+                    cache != null ? cache.getHits() + cache.getMisses() : 0,
+                    context.elapsedMillis());
+        } finally {
+            if (leaf instanceof MultithreadedExactEvaluator) {
+                ((MultithreadedExactEvaluator) leaf).shutdown();
+            }
+        }
     }
 
     private static void printSummary(List<InstanceReport> reports, int runsPerInstance,
@@ -223,7 +249,7 @@ public final class Main {
         System.out.printf(Locale.ROOT,
                 "%nSummary - gap vs .sln reference, %d seeded runs per instance%n", runsPerInstance);
         System.out.printf(Locale.ROOT,
-                "  %-9s %4s %9s  %9s %9s %9s  %5s  %7s  %8s%n",
+                "  %-9s %4s %10s  %9s %9s %9s  %5s  %7s  %8s%n",
                 "instance", "n", "ref", "best-gap", "mean-gap", "worst-gap", "hits", "cache", "time");
         int totalRuns = 0;
         int validRuns = 0;
@@ -259,14 +285,15 @@ public final class Main {
             refHits += instanceRefHits;
             double meanValue = valueSum / report.runs.size();
             System.out.printf(Locale.ROOT,
-                    "  %-9s %4d %9s  %9s %9s %9s  %5s  %6.1f%%  %7.2fs%n",
+                    "  %-9s %4d %10s  %9s %9s %9s  %5s  %7s  %7.2fs%n",
                     report.name, report.n,
                     report.ref >= 0 ? String.valueOf(report.ref) : "n/a",
                     gapString(bestValue, report.ref),
                     meanGapString(meanValue, report.ref),
                     gapString(worstValue, report.ref),
                     report.ref >= 0 ? instanceRefHits + "/" + report.runs.size() : "n/a",
-                    totalLookups == 0 ? 0.0 : 100.0 * totalHits / totalLookups,
+                    totalLookups == 0 ? "n/a"
+                            : String.format(Locale.ROOT, "%.1f%%", 100.0 * totalHits / totalLookups),
                     totalSeconds);
         }
         System.out.printf(Locale.ROOT,
@@ -311,12 +338,13 @@ public final class Main {
         final int stagnationThreshold;
         final int eliteCount;
         final int cacheCapacity;
+        final int evaluatorWorkers;
         final int maxGenerations;
 
         GAConfiguration(int populationSize, int offspringCount, double crossoverRate,
                 int tournamentSize, double winProbability, double baselineFraction,
                 double hotFraction, double coolingFactor, int stagnationThreshold,
-                int eliteCount, int cacheCapacity, int maxGenerations) {
+                int eliteCount, int cacheCapacity, int evaluatorWorkers, int maxGenerations) {
             this.populationSize = populationSize;
             this.offspringCount = offspringCount;
             this.crossoverRate = crossoverRate;
@@ -328,6 +356,7 @@ public final class Main {
             this.stagnationThreshold = stagnationThreshold;
             this.eliteCount = eliteCount;
             this.cacheCapacity = cacheCapacity;
+            this.evaluatorWorkers = evaluatorWorkers;
             this.maxGenerations = maxGenerations;
         }
     }
@@ -356,8 +385,10 @@ public final class Main {
             this.millis = millis;
         }
 
-        double hitRatePct() {
-            return cacheLookups == 0 ? 0.0 : 100.0 * cacheHits / cacheLookups;
+        /** Hit rate over this run's cache lookups; "n/a" when no cache was configured. */
+        String cacheString() {
+            return cacheLookups == 0 ? "n/a"
+                    : String.format(Locale.ROOT, "%.1f%%", 100.0 * cacheHits / cacheLookups);
         }
     }
 
